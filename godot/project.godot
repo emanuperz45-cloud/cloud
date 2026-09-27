@@ -8,7 +8,7 @@ config_version=5
 config/name="Web Swing Demo"
 config/description="Demo jugable del sistema de balanceo con péndulo regulado."
 run/main_scene="res://demo/main.tscn"
-config/features=PackedStringArray("4.7", "Forward Plus")
+config/features=PackedStringArray("4.7", "GL Compatibility")
 
 [display]
 
@@ -24,12 +24,12 @@ window/stretch/aspect="expand"
 
 [physics]
 
+3d/physics_engine="GodotPhysics3D"
 common/physics_interpolation=true
 
 [rendering]
 
-renderer/rendering_method="forward_plus"
-rendering_device/driver.windows="vulkan"
-rendering_device/fallback_to_opengl3=true
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
 anti_aliasing/quality/msaa_3d=1
 lights_and_shadows/directional_shadow/size=4096

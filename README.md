@@ -32,6 +32,10 @@ blender -b rig.blend --python tools/swing_lab/blender_arc_baker.py -- \
 # Jugar desde el editor: abrir la carpeta godot/ en Godot 4.7 y pulsar F5.
 # Exportar el .exe de Windows (requiere las plantillas de exportación 4.7.2):
 godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe
+# .exe reducido (~28 MB en vez de 104 MB): compilar la plantilla slim y usar su preset
+godot/export/build_slim_template.sh /ruta/a/godot-4.7.2-stable windows
+cp /ruta/a/godot-4.7.2-stable/bin/godot.windows.template_release.x86_64.slim.exe godot/build/templates/
+godot --headless --path godot --export-release "Windows Slim" build/WebSwingDemo.exe
 # Prueba automática sin interfaz (autopiloto 120 s, imprime un resumen):
 godot --headless --path godot --fixed-fps 60 -- --autopilot=120
 ```

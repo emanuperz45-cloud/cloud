@@ -10,7 +10,7 @@ const HELP := """\
 Mantén CLIC IZQ / R2 para balancearte · suéltalo en la subida para salir con impulso
 ESPACIO / A: salto (en pleno balanceo, salto con impulso)
 MAYÚS / B: picada  ·  E / X: web zip  ·  F / Y: truco
-Q, CLIC DER / L2: point zip al punto amarillo → ESPACIO al llegar = Point Launch
+Q, CLIC DER / L2: point zip al punto amarillo, y ESPACIO al llegar = Point Launch
 WASD / stick izq: dirección  ·  ratón / stick der: cámara
 R: reaparecer  ·  ESC: liberar ratón  ·  H: ocultar ayuda"""
 

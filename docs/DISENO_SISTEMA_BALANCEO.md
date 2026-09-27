@@ -939,6 +939,8 @@ void TraversalSystem::PushAnimatorParameters(float dt)
 
 `godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un maniquí animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
 
+**Build reducido (28 MB).** `godot/export/build_slim_template.sh` compila una plantilla de exportación propia de Godot 4.7.2: renderer Compatibility (OpenGL 3.3) sin Vulkan/D3D12, solo los módulos que usa la demo (GDScript, FreeType, text server básico, física 3D de Godot), sin física/navegación 2D, XR ni GUI avanzada, y un *build profile* (`slim_template.build`) que desregistra 104 clases no usadas (partículas, GI, decals, sprites 3D, audio effects…) para que el enlazado con LTO elimine su código. Resultado: 109 MB → 28 MB. La misma configuración compilada para Linux reproduce exactamente la partida de referencia (mismo resumen de autopiloto) y renderiza igual.
+
 ### B. Estructura del repositorio
 
 ```
