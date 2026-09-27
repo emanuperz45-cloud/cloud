@@ -209,12 +209,12 @@ $$
 | B | **Attach kick** | Enganche | Si la componente tangencial hacia delante $<13$ m/s, se completa hasta 13 m/s |
 | C | **Regulador de energía** | Fondo del arco | Campana gaussiana en $\theta_s$, ver abajo |
 | D | **Banda de altitud** | Suelta | Boost vertical $\times\operatorname{clamp}(1-(p_y-y_{crucero})/12)$ |
-| E | **Techos de velocidad** | Siempre | $\mathbf a=-0{,}03(v-34)^2\hat{\mathbf v}$ si $v>34$; recorte duro a 48 m/s |
+| E | **Techos de velocidad** | Siempre | $\mathbf a=-0{,}03(v-42)^2\hat{\mathbf v}$ si $v>42$; recorte duro a 55 m/s |
 | F | **Predicción y evitación** | Cada 0,1 s | Simula 1 s, *sphere cast* entre muestras (§ abajo) |
 | G | **Solver propone, colisión dispone** | Cada frame | `move_and_slide` resuelve; si colisiona, resync del solver o wall run |
 | H | **Ventana de suelta perfecta** | Suelta | $\lvert\theta_s-40^\circ\rvert\le9^\circ$ → boosts ×1,45 |
 
-**A — Conservación del momento lineal al enganchar.** La física pura destruiría la componente radial de la velocidad (un jugador cayendo a 30 m/s con la cuerda a 45° saldría a $30\cos45^\circ=21$ m/s). Con retention 0,92 sale a **29,3 m/s**. Es la base de la técnica *picada → swing*: el simulador mide enganche a 57 m/s tras una picada desde 160 m y salida del balanceo a 38 m/s (vs. crucero de 25 m/s).
+**A — Conservación del momento lineal al enganchar.** La física pura destruiría la componente radial de la velocidad (un jugador cayendo a 30 m/s con la cuerda a 45° saldría a $30\cos45^\circ=21$ m/s). Con retention 0,92 sale a **29,3 m/s**. Es la base de la técnica *picada → swing*: el simulador mide enganche a 57 m/s tras una picada desde 160 m y salida del balanceo a 47 m/s (vs. crucero de 31 m/s).
 
 **C — Regulador de energía (inyección en el punto más bajo).** Predice la velocidad que se tendrá en el fondo y empuja tangencialmente solo cerca de él:
 
@@ -226,13 +226,13 @@ $$
 a_b = \operatorname{clamp}\!\big(k_E\,(v_{goal}-v_b^{pred}),\;0,\;a_{max}\big)\cdot e^{-(\theta_s/\sigma)^2}
 $$
 
-con $v_{target}=29$ m/s, $k_E=3\ \mathrm{s^{-1}}$, $a_{max}=18\ \mathrm{m/s^2}$, $\sigma=30^\circ$, $w_h=0{,}75$. El término de altura convierte el regulador en uno de **energía total**: si el arco pasa por encima de la altura de crucero, esa energía potencial se descuenta de la cinética objetivo y no se inyecta. Solo actúa con el gatillo mantenido y nunca frena (el frenado es tarea del techo blando E) → quien llega rápido de una picada **conserva** su exceso.
+con $v_{target}=38$ m/s, $k_E=3\ \mathrm{s^{-1}}$, $a_{max}=18\ \mathrm{m/s^2}$, $\sigma=30^\circ$, $w_h=0{,}75$. El término de altura convierte el regulador en uno de **energía total**: si el arco pasa por encima de la altura de crucero, esa energía potencial se descuenta de la cinética objetivo y no se inyecta. Solo actúa con el gatillo mantenido y nunca frena (el frenado es tarea del techo blando E) → quien llega rápido de una picada **conserva** su exceso.
 
 La campana concentra el empuje donde la tensión es máxima y la animación muestra la máxima compresión (§3.5): el jugador *siente* el "tirón" en el sitio donde el cuerpo lo vende.
 
 **D — Suelta.**
 $$
-\mathbf v_{out}=\mathbf v + \hat{\mathbf y}\,5{,}5\,m\,u_\theta\,u_h + \hat{\mathbf d}_v\,3{,}0\,m,\qquad
+\mathbf v_{out}=\mathbf v + \hat{\mathbf y}\,5{,}5\,m\,u_\theta\,u_h + \hat{\mathbf d}_v\,5{,}0\,m,\qquad
 u_\theta=\operatorname{clamp}(\theta_s/40^\circ),\;\; m=1{,}45 \text{ si perfecta},\;\; v_{y}\le17
 $$
 
@@ -240,9 +240,9 @@ $u_h$ es la banda de altitud (D). **Riesgo/recompensa medida** (simulador, 60 s)
 
 | Estilo de suelta | Crucero | Alt. mínima | Lectura |
 |---|---|---|---|
-| Temprana (25°) | **35,3 m/s** | 8,2 m | Rápido y bajo: técnica de experto, riesgo de calle |
-| Perfecta (40°) | 24,5 m/s | 30,1 m | Crucero sostenible y estable en altura |
-| Tardía (60°) | 14,5 m/s | 30,5 m | Cambia velocidad por altura |
+| Temprana (25°) | **42,9 m/s** | 21,5 m | Rápido y bajo: técnica de experto, riesgo de calle |
+| Perfecta (40°) | 31,1 m/s | 18,2 m | Crucero sostenible y estable en altura |
+| Tardía (60°) | 18,3 m/s | 37,1 m | Cambia velocidad por altura |
 
 **F — Corrección de trayectoria para evitar colisiones.** Cada 0,1 s se clona el péndulo y se integra a 30 Hz durante 1 s; entre muestras consecutivas se barre una esfera de 0,5 m (`cast_motion`). En el primer impacto, con $t_{hit}$ y normal $\hat{\mathbf m}$:
 
@@ -256,10 +256,10 @@ $u_h$ es la banda de altitud (D). **Riesgo/recompensa medida** (simulador, 60 s)
 
 | Métrica | Péndulo físico sin asistencias | Péndulo regulado |
 |---|---|---|
-| Velocidad de crucero | 6,4 m/s | **24,5 m/s** |
-| Colisiones con fachadas | 11 | **0** |
-| Desviación lateral máx. | 39,1 m | **6,5 m** |
-| Altitud mínima | 3,9 m | **30,1 m** |
+| Velocidad de crucero | 8,0 m/s | **31,1 m/s** |
+| Colisiones con fachadas | 7 | **0** |
+| Desviación lateral máx. | 59,2 m | **5,4 m** |
+| Altitud mínima | 5,6 m | **18,2 m** |
 
 ---
 
@@ -288,7 +288,7 @@ Referencia: el moveset de traversal de *Marvel's Spider-Man* (2018) según guía
 | *Loop* en el swing | Vuelta completa alrededor del anclaje en arcos muy rápidos | F / LB **mantenido** en un swing > 20 m/s | Se provoca a voluntad recogiendo cuerda hasta el radio de loop (§2.1) |
 | **△** en el aire (*Spider-Man 2*) | *Web Wings*: planeo con membranas entre brazos y cuerpo; stick adelante pica, atrás frena y sube | G, Ctrl o rueda / Y | Mismo botón las pliega (§2.6) |
 | Abrir alas en picada (*SM2*) | Impulso extra al desplegarlas a gran velocidad | Picada + G a > 30 m/s cayendo | +8 m/s (*ULTIMATE WINGS* en el HUD) |
-| Túneles de viento (*SM2*) | Corredores de aire sobre las avenidas que empujan a las alas | Anillos azules sobre 5 avenidas | Empuje con techo (~38 m/s) y deriva al eje |
+| Túneles de viento (*SM2*) | Corredores de aire sobre las avenidas que empujan a las alas | Anillos azules sobre 5 avenidas | Empuje con techo (~57 m/s) y deriva al eje |
 | Corrientes ascendentes (*SM2*) | Columnas de aire sobre azoteas que elevan | 14 columnas con rejilla en azoteas | Impulso vertical con inercia al salir |
 | *Super Slingshot* (*SM2*) | Dos webs por delante, tensar hacia atrás y salir disparado | Q/LT + Espacio/A mantenidos (suelo, posado o trepando); soltar Espacio | Carga 1,2 s, 20→58 m/s a 45°; soltar Q cancela (§2.7) |
 
@@ -406,7 +406,7 @@ con $u_z=\max(0{,}2\,v_y,\,5)$. **Quick Zip:** si el zip anterior fue hace menos
 
 **Point Zip → Perch → Point Launch:**
 - Objetivos: nodos del grupo `perch_points` (generados sobre esquinas de azoteas; en la demo, retícula amarilla) con $\cos\angle(\text{cámara},\text{objetivo})>0{,}85$, ≤ 45 m y línea de visión.
-- Viaje a 38 m/s con arranque suave (`smoothstep` 0,12 s), guiado por la web (no se engancha en aristas).
+- Viaje a 46 m/s con arranque suave (`smoothstep` 0,12 s), guiado por la web (no se engancha en aristas).
 - Llegada → `Perch`. Salto dentro de **0,22 s** tras llegar (o hasta 0,15 s antes, por el buffer) = **Point Launch Boost**: $\mathbf v=1{,}25\,(18\,\hat{\mathbf d}+19\,\hat{\mathbf y})$ y voltereta; fuera de ventana ×1.
 - *Animación:* `PointZip_Fire` → `PointZip_Travel` (loop, cuerpo alineado con la web) → `Perch_Land` (root motion, 6 f) → `Perch_Idle` → `PointLaunch_Jump` o `PointLaunch_Flip` (perfecto).
 
@@ -419,7 +419,7 @@ $$
 $$
 El arrastre horizontal es casi nulo (0,04 s⁻¹): el momento de la suelta se conserva durante todo el vuelo.
 
-**Picada (Dive):** gravedad ×2,6, arrastre 0,0076 → $v_{term}=58$ m/s, +4 m/s² hacia delante. Entra con el botón de picada si $v_y<0$. El valor de la picada está en la salida: al engancharse, el *catch* (A) redirige la velocidad vertical a tangencial (57 m/s de entrada, pico de 48 m/s limitado por el techo duro).
+**Picada (Dive):** gravedad ×2,6, arrastre 0,0076 → $v_{term}=58$ m/s, +4 m/s² hacia delante. Entra con el botón de picada si $v_y<0$. El valor de la picada está en la salida: al engancharse, el *catch* (A) redirige la velocidad vertical a tangencial (57 m/s de entrada, pico de 55 m/s limitado por el techo duro).
 
 **Air Tricks por dirección** (como ○+△+stick en el original; puramente expresivos, 0,6 s, bloqueados en picada): adelante = voltereta adelante, atrás = voltereta atrás, izquierda/derecha = tirabuzón con brazos en cruz, sin dirección = giro doble.
 
@@ -452,7 +452,7 @@ Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia do
 
 ### 2.5 Suelo: sprint, Charge Jump, aterrizajes y Quick Recovery
 
-- **Sprint:** clic mantenido + dirección → 14 m/s (9 sin clic). Contra una fachada → carrera vertical. Saltar con el clic mantenido dispara la telaraña en el aire (como R2+X en el original).
+- **Sprint:** clic mantenido + dirección → 18 m/s (10 sin clic). Contra una fachada → carrera vertical. Saltar con el clic mantenido dispara la telaraña en el aire (como R2+X en el original).
 - **Charge Jump:** mantener salto carga en 0,7 s; al soltar $v_y=\operatorname{lerp}(9,\,25,\,c^2)$ + 4c m/s hacia delante. Un toque = salto normal. El personaje se agacha en proporción a la carga (*squash*) y el HUD muestra el %.
 - **Aterrizaje:** $\lvert v_y\rvert>25$ → **superhéroe** (rodilla y puño al suelo, frena, 0,7 s); $\lVert\mathbf v_{xz}\rVert>8$ → **rodada** (voltereta, conserva inercia, 0,45 s); si no, suave.
 - **Quick Recovery:** salto durante la rodada → vuelve al aire con $\max(v_{xz},12)$ hacia delante y 13 m/s hacia arriba.
@@ -460,21 +460,24 @@ Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia do
 ### 2.6 Web Wings y viento (planeo de *Spider-Man 2*)
 
 Modelo de **ángulo de trayectoria** $\gamma$ y rumbo $\psi$ (no un cuerpo rígido con sustentación: más estable y fácil de afinar), en `WebWings` / `Glider` (Python):
-$$\dot V=-g\sin\gamma-kV^2(1+0{,}8\,f),\qquad \dot\gamma\to\gamma^*(\text{stick})\ \text{a }1{,}6\operatorname{clamp}(V/20,0{,}3,1{,}3)\ \text{rad/s},\qquad \dot\psi=-\frac{g\tan\phi}{V}$$
+$$\dot V=-g\sin\gamma-kV^2(1+0{,}8\,f),\qquad \dot\gamma\to\gamma^*(\text{stick})\ \text{a }2{,}2\operatorname{clamp}(V/20,0{,}3,1{,}3)\ \text{rad/s},\qquad \dot\psi=-\frac{\phi}{\phi_{max}}\,1{,}7\,\operatorname{lerp}\!\Big(1,\,0{,}7,\,\operatorname{clamp}\tfrac{V-30}{40}\Big)$$
+
+El viraje es *arcade*: la tasa de giro depende del alabeo y casi nada de la velocidad (un viraje coordinado $g\tan\phi/V$ daba 17°/s a 38 m/s, demasiado lento para esquivar edificios).
 
 | Entrada / situación | Regla | Resultado medido |
 |---|---|---|
-| Sin stick | $\gamma^*=-7^\circ$ | Planeo estable a ~21 m/s, fineza 7–9 : 1 |
+| Sin stick | $\gamma^*=-8^\circ$ | Planeo estable a ~28 m/s (102 km/h), fineza ~7 : 1 |
 | Stick adelante (picar) | $\gamma^*\to-50^\circ$ | > 45 m/s en 12 s |
 | Stick atrás (encabritar, $f=1$) | $\gamma^*\to+22^\circ$, resistencia ×1,8 | Cambia velocidad por altura (+25 m); si $V<9$ m/s entra en **pérdida**: el morro cae a −35° hasta recuperar 14 m/s (histéresis) |
-| Stick lateral | alabeo $\phi\to\pm50^\circ$ (4 s⁻¹), viraje coordinado | Media vuelta en ~6 s a 20 m/s |
-| Abrir en picada a > 30 m/s | $V\mathrel{+}=8$ m/s | 48,6 → 56,5 m/s en la demo |
-| **Túnel de viento** (segmento, radio 8 m) | empuje $26\,\tau\,\max(\hat{\mathbf d}\cdot\hat{\mathbf t},0)(1-V/46)$; $\gamma^*$ se mezcla hacia la pendiente del túnel (80 %); rumbo alineado (1,5 s⁻¹); deriva al eje $1{,}2\,\tau\,\Delta$ | Crucero ~38 m/s (139 km/h) sin tocar el stick y centrado en el eje (< 2 m) |
+| Stick lateral | alabeo $\phi\to\pm65^\circ$ (7 s⁻¹) | ~97°/s a baja velocidad; **78°/s medidos a 58 m/s** (antes ~17°/s) |
+| Cámara (ratón / stick derecho) | mientras el jugador mueve la cámara (y 0,6 s después) el alabeo añade $-\operatorname{clamp}(\Delta\psi_{cam}/40^\circ)$; con el stick lateral pulsado no actúa | Vuela hacia donde miras: mirar 70° a un lado gira 70° en 1,5 s |
+| Abrir en picada a > 30 m/s | $V\mathrel{+}=10$ m/s | 48,6 → 58,6 m/s en la demo |
+| **Túnel de viento** (segmento, radio 8 m) | empuje $26\,\tau\,\max(\hat{\mathbf d}\cdot\hat{\mathbf t},0)(1-V/72)$; $\gamma^*$ se mezcla hacia la pendiente del túnel (80 %); rumbo alineado (1,5 s⁻¹); deriva al eje $1{,}2\,\tau\,\Delta$ | Crucero ~57 m/s (205 km/h) sin tocar el stick y centrado en el eje (< 2 m) |
 | **Corriente ascendente** (columna r 6 m, 70 m) | $v_{lift}\to16\,u$ m/s a 30 m/s²; al salir decae con $\tau=1{,}2$ s | Cruzarla a 15 m/s da +10 m |
 
 $\tau,u\in[0,1]$ caen con *smoothstep* hacia el borde y los extremos (`WindField.sample`). Colisiones: el planeo usa `move_and_slide`; una fachada lo convierte en wall run/trepar, el suelo en aterrizaje; tras un roce, $V$ se toma de la velocidad real. Desde el planeo: clic = swing (si no hay anclaje sigue planeando), salto = web zip, picada = Dive, G = plegar (ignorado los primeros 0,15 s para que la misma pulsación no abra y cierre).
 
-**Animación.** Cuerpo con la cabeza hacia $\mathbf v$, pecho al suelo y alabeo $-\phi$ alrededor de $\mathbf v$; brazos abiertos (88°, 58° picando, +18° y adelantados al encabritar), piernas juntas y rectas, *buffet* de 23 Hz con la velocidad (8° en pérdida). Las **membranas** se generan cada paso (`ImmediateMesh`) entre hombro–codo–muñeca (borde de ataque) y cadera–muslo (borde de salida festoneado), con abombado $\propto\sin\pi u\sin\pi v$ hacia la espalda y aleteo; se despliegan/pliegan en 0,25/0,15 s. Cámara: +1,5 m de distancia, cabeceo que acompaña a $\gamma$, *roll* $0{,}25\phi$.
+**Animación.** Cuerpo con la cabeza hacia $\mathbf v$, pecho al suelo y alabeo $-\phi$ alrededor de $\mathbf v$; brazos abiertos (88°, 58° picando, +18° y adelantados al encabritar), piernas juntas y rectas, *buffet* de 23 Hz con la velocidad (8° en pérdida). Las **membranas** se generan cada paso (`ImmediateMesh`) entre hombro–codo–muñeca (borde de ataque) y cadera–muslo (borde de salida festoneado), con abombado $\propto\sin\pi u\sin\pi v$ hacia la espalda y aleteo; se despliegan/pliegan en 0,25/0,15 s. Cámara: +1,5 m de distancia, cabeceo que acompaña a $\gamma$, *roll* $0{,}25\phi$ y seguimiento rápido del rumbo (espera 0,35 s y 5 s⁻¹, frente a 1 s y 1,6 s⁻¹ fuera del planeo) para acompañar los virajes.
 
 ### 2.7 Super Slingshot
 
@@ -489,10 +492,11 @@ con voltereta (doble a carga completa), *punch* de FOV de $8+14c$ grados y líne
 | FOV | $70^\circ+20^\circ\operatorname{clamp}(v/45)$ + *punch* que sube en ~50 ms y decae a 14°/s: suelta perfecta 9°, point launch 7–12°, slingshot $8+14c$, alas con impulso 10°, zip 4°, loop 6° |
 | Look-ahead | el foco se adelanta $0{,}08\,\mathbf v\operatorname{clamp}(v/40)$ (vertical ×0,4) |
 | Roll | $-0{,}07$ rad × stick en swing/picada; $-0{,}25\phi$ planeando |
-| Shake | pico de tensión (> 4 g), aterrizajes > 20 m/s, planeo > 40 m/s y túneles |
+| Shake | pico de tensión (> 4 g), aterrizajes > 20 m/s, planeo > 55 m/s; suma de senos de 5–9 Hz (el ruido aleatorio por frame se veía como vibración) |
 | Pantalla | líneas de velocidad radiales y viñeta con $\operatorname{clamp}((v-22)/30)$, túnel y lanzamientos |
 | Audio (procedural) | viento: ruido filtrado 250→2600 Hz y ganancia $(v/50)^{1{,}4}$; *thwip* de la web, *whoosh* de suelta/salto/truco, golpe de aterrizaje, despliegue de alas y latigazo del slingshot, sintetizados al arrancar (0 bytes de assets) |
 | Web | cinta que se afina de 5 a 2,5 cm hacia el anclaje y estrella de impacto de 7 radios en el punto de enganche |
+| Estelas | cintas de 6 cm en manos y pies, 0,2 s de vida, opacidad $\propto\operatorname{clamp}((v-16)/20)$ en swing, planeo, picada, zips y caída rápida; muestreadas con la posición interpolada (sin temblor a > 60 fps) |
 
 ---
 
@@ -625,7 +629,10 @@ En wall run, rayo desde cada cadera hacia $-\hat{\mathbf m}$ (1,6 m); target = i
 | **Squash** (compresión bajo G) | Aditiva `GLoad` = $\operatorname{clamp}((G-1)/(G_{max}-1))$, $G_{max}=6$: columna −8 %, rodillas al pecho, hombros hundidos | $G=T/g$ |
 | **Stretch** (disparo y ápice) | `Swing_Fire` (brazo en extensión total 2 frames *antes* de que la web llegue) + pose `Apex` extendida | $\varphi\to\pm1$ |
 | **Anticipación** | Cabeza hacia el próximo anclaje en la subida; 2–3 frames de recogida antes del Fire | $\varphi\ge0{,}2$ |
-| **Overlap / follow-through** | Retrasos de fase por grupo en el baker (piernas 3–4 f, brazos 1 f, cabeza −2 f); en runtime, cada articulación sigue su pose con un muelle amortiguado semi-implícito sobre el cuaternión ($\omega=1{,}1\cdot$rate, $\zeta=0{,}62$ en extremidades y $0{,}9$ en tronco/cabeza): los cambios de pose llegan con un pequeño rebote (implementado en el maniquí de la demo) | aceleración de la raíz |
+| **Limpieza** | Nada oscila a más de ~3 Hz en el cuerpo (a 60 fps una oscilación de 20–30 Hz se ve como vibración): vaivén lento de 2–3 Hz en caída, picada y planeo; muelles de articulación casi críticos ($\zeta=0{,}85$ extremidades, 1 tronco) | — |
+| **Carrera** | Cadencia 1,1→1,7 ciclos/s con la velocidad; la velocidad sale de la amplitud de la zancada (30°→62°); pierna de apoyo casi recta, talón al glúteo al esprintar; rebote de cadera dos veces por ciclo; contrarrotación hombros/cadera ±10°; inclinación hacia delante 4°→26° | $v$ |
+| **Inclinación en curvas** | Corriendo, la pelvis rueda $-0{,}7\arctan(\omega v/g)$ hacia dentro (aceleración centrípeta real); en el swing, 18° con el stick | $\omega=\dot\psi$, $v$ |
+| **Overlap / follow-through** | Retrasos de fase por grupo en el baker (piernas 3–4 f, brazos 1 f, cabeza −2 f); en runtime, cada articulación sigue su pose con un muelle amortiguado semi-implícito sobre el cuaternión ($\omega=$ rate, $\zeta=0{,}85$ en extremidades y $1$ en tronco/cabeza): cambios de pose suaves y con peso, sin rebotes que parezcan temblor (implementado en el maniquí de la demo) | aceleración de la raíz |
 | **Arcos** | La trayectoria **es** un arco físico; los clips se hornean sobre ese arco real (§4.2) | $\mathbf p(t)$ |
 | **Timing** | Gravedad asimétrica = caída rápida y *hang time* en el ápice sin tocar la animación | $g_{eff}$ |
 | **Lean** | Aditiva Add3 con el stick lateral; la raíz además se inclina hacia la aceleración percibida en Fall | `Steer`, $\mathbf v$ |
@@ -758,35 +765,37 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 |---|---|---|
 | `catch_retention` | 0,92 | 0 (física pura) → −3,6 m/s de crucero; 1,0 → +0,1 m/s (sin margen de lectura del "tirón") |
 | `attach_min_tangent_speed` | 13 m/s | Arranque de swing desde parado o salto |
-| `target_bottom_speed` | 29 m/s | 25 → 23,2 m/s de crucero y 5,0 g; 33 → 25,4 m/s, 5,9 g y más deriva de altura |
+| `target_bottom_speed` / `speed_soft_cap` / `speed_hard_cap` | 38 / 42 / 55 m/s | Crucero 31,1 m/s y 6,9 g (con 29 / 34 / 48: 24,5 m/s y 5,6 g); 0 colisiones y 0 toques de suelo en ambos |
 | `boost_accel_max` / `boost_gain` / `boost_sigma_deg` | 18 m/s² / 3 s⁻¹ / 30° | Sin inyección: −2,2 m/s de crucero |
 | `altitude_energy_weight` | 0,75 | Peso de la altura en el regulador de energía |
 | `release_perfect_angle_deg` ± `window` | 40° ± 9° | Ventana de 18°: a ~28 m/s con $L\approx27$ m ($\omega\approx60^\circ$/s) son ≈ 0,3 s |
 | `release_perfect_bonus` | 0,45 | 0 → 20,1 m/s de crucero; 0,9 → 27,4 m/s (demasiado dominante) |
-| `release_up_boost` / `release_fwd_boost` | 5,5 / 3,0 m/s | Forma del vuelo tras la suelta |
+| `release_up_boost` / `release_fwd_boost` | 5,5 / 5,0 m/s | Forma del vuelo tras la suelta |
 | `release_max_up_speed` | 17 m/s | Evita lanzamientos cohete |
 | `release_band_height` | 12 m | Por encima de crucero + 12 m no hay boost vertical |
 | `hang_damping` / `hang_pivot_rate` / `hang_wall_offset` | 0,75 s⁻¹ / 0,8 s⁻¹ / 1 m | Péndulo sostenido: amortiguación, convergencia al anclaje y separación de la fachada |
 | `reel_climb_speed` / `hang_min_length` | 5 m/s / 4 m | Subir/bajar por la telaraña colgado |
 | `reattach_delay` | 0,15 s | Con el clic mantenido en el aire, espera antes de disparar (salto + clic desde el suelo) |
 | `swing_jump_forward` / `swing_jump_up` / `hang_jump_up` | 9 / 9 / 12 m/s | Salto en el swing según fase / salto desde colgado |
-| `sprint_speed` / `charge_jump_speed` / `charge_jump_time` | 14 m/s / 25 m/s / 0,7 s | Sprint y Charge Jump |
+| `run_speed` / `sprint_speed` / `charge_jump_speed` / `charge_jump_time` | 10 / 18 m/s / 25 m/s / 0,7 s | Carrera, sprint y Charge Jump |
 | `quick_recovery_window` / `quick_recovery_up` | 0,45 s / 13 m/s | Quick Recovery |
 | `wall_crawl_speed` / `wall_web_pull` / `corner_launch_boost` | 5 m/s / 14 m/s / 6 m/s | Trepar, tirón de web en la pared, corner launch |
 | `quick_zip_window` / `zip_cooldown` | 1 s / 0,25 s | Quick Zip |
 | `steer_accel` / `lane_keep` | 16 m/s² / 1,2 s⁻¹ | Respuesta lateral / estabilidad de carril |
 | `anchor_ideal_forward/up/side` | 18 / 22 / 9 m | Punto ideal (×$k(v)\in[0{,}8,1{,}5]$) |
 | `anchor_min_height` / `anchor_max_distance` | 6 / 65 m | Filtros duros |
-| `zip_speed` / `zip_duration` / `zip_cooldown` | 26 m/s / 0,3 s / 0,35 s | Web zip |
-| `point_zip_speed` / `point_launch_*` | 38 m/s / (18, 19) m/s ×1,25 | Point launch; ventana 0,22 s |
+| `zip_speed` / `zip_duration` / `zip_cooldown` | 32 m/s / 0,3 s / 0,25 s | Web zip |
+| `point_zip_speed` / `point_launch_*` | 46 m/s / (18, 19) m/s ×1,25 | Point launch; ventana 0,22 s |
 | `wall_run_vertical_angle_deg` / `wall_run_speed_retention` | 40° / 0,85 | Vertical vs horizontal / energía conservada |
 | `substep` / `predict_horizon` / `predict_interval` | 1/240 s / 1 s / 0,1 s | Coste del solver y de la predicción |
 | `loop_radius_factor` / `loop_min_speed` | 0,8 / 20 m/s | Loop con truco mantenido: cuerda hasta $0{,}8\,v^2/(5g_{subida})$ |
-| `glide_drag` / `glide_neutral_deg` / `glide_dive_deg` / `glide_climb_deg` | 0,0028 / −7° / −50° / +22° | Planeo neutro ~21 m/s (fineza ~8), picado ~52 m/s |
-| `glide_pitch_rate` / `glide_max_bank_deg` / `glide_bank_rate` | 1,6 rad/s / 50° / 4 s⁻¹ | Respuesta de cabeceo y alabeo |
+| `glide_drag` / `glide_neutral_deg` / `glide_dive_deg` / `glide_climb_deg` | 0,0015 / −8° / −50° / +22° | Planeo neutro ~28 m/s (fineza ~7), picado ~70 m/s |
+| `glide_pitch_rate` / `glide_max_bank_deg` / `glide_bank_rate` | 2,2 rad/s / 65° / 7 s⁻¹ | Respuesta de cabeceo y alabeo |
+| `glide_turn_rate` / `glide_turn_highspeed` | 1,7 rad/s / 0,7 | Viraje a fondo ~97°/s, 70 % a 70 m/s |
+| `glide_camera_steer` / `glide_camera_steer_deg` | 1 / 40° | Timón con la cámara |
 | `glide_stall_speed` / `glide_flare_drag` / `glide_open_min_speed` | 9 m/s / 0,8 / 14 m/s | Pérdida (histéresis +5 m/s), freno al encabritar, velocidad mínima al abrir |
-| `glide_dive_boost` | 8 m/s | Abrir las alas en picada a > 30 m/s |
-| `glide_tunnel_accel` / `glide_tunnel_speed` / `glide_tunnel_authority` / `glide_tunnel_align` / `glide_tunnel_center` | 26 m/s² / 46 m/s / 0,8 / 1,5 s⁻¹ / 1,2 s⁻¹ | Túnel: crucero ~38 m/s, centrado en el eje |
+| `glide_dive_boost` | 10 m/s | Abrir las alas en picada a > 30 m/s |
+| `glide_tunnel_accel` / `glide_tunnel_speed` / `glide_tunnel_authority` / `glide_tunnel_align` / `glide_tunnel_center` | 26 m/s² / 72 m/s / 0,8 / 1,5 s⁻¹ / 1,2 s⁻¹ | Túnel: crucero ~57 m/s, centrado en el eje |
 | `glide_updraft_speed` / `glide_updraft_accel` / `glide_updraft_decay` | 16 m/s / 30 m/s² / 1,2 s | Corriente ascendente con inercia |
 | `slingshot_charge_time` / `slingshot_min_speed` / `slingshot_max_speed` / `slingshot_lift` / `slingshot_pull_back` | 1,2 s / 20 / 58 m/s / 1,0 (45°) / 1,6 m | Super Slingshot |
 
@@ -826,16 +835,16 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 
 | Métrica | Valor |
 |---|---|
-| Velocidad de crucero | 24,5 m/s (≈ 88 km/h) |
-| Duración media de un balanceo | 1,37 s |
-| Cuerda media | 27,2 m |
-| Velocidad: enganche → máx. → suelta | 26,3 → 31,2 → 29,9 m/s |
-| G máx. por balanceo (media / pico) | 5,6 / 7,4 g |
-| Colisiones / toques de suelo | 0 / 0 |
-| Picada 160 m → swing | enganche 57 m/s → pico 48 m/s (techo duro) → suelta 38 m/s |
+| Velocidad de crucero | 31,1 m/s (≈ 112 km/h; antes 24,5) |
+| Duración media de un balanceo | 1,18 s |
+| Cuerda media | 27,9 m |
+| Velocidad: enganche → máx. → suelta | 32,6 → 36,8 → 37,3 m/s |
+| G máx. por balanceo (media / pico) | 6,9 / 7,4 g |
+| Colisiones / toques de suelo / fallos de anclaje | 0 / 0 / 0 |
+| Picada 160 m → swing | enganche 57 m/s → pico 55 m/s (techo duro) → suelta 47 m/s |
 | Velocidad terminal caída / picada | 40,1 / 57,9 m/s |
 
-Sensibilidad (45 s por variante, un parámetro cada vez):
+Sensibilidad (45 s por variante, un parámetro cada vez; medida con la calibración anterior, $v_{target}=29$ m/s — las tendencias se mantienen):
 
 | Variante | Crucero m/s | Duración s | G media | Alt. mín. m | σ alt. m |
 |---|---|---|---|---|---|
@@ -1081,7 +1090,7 @@ void TraversalSystem::PushAnimatorParameters(float dt)
 
 ### A. Demo jugable (Windows)
 
-`godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un personaje animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. El traje (`demo/suit.gdshader`) reproduce la esfera de referencia: tela roja con microtextura hexagonal y telaraña negra brillante en relieve (radial en pecho y espalda, a lo largo de brazos y piernas), con la propia imagen de referencia proyectada como máscara (`demo/textures/suit_reference.webp`, importada con compresión S3TC). `demo/autopilot.gd` prueba el control real con cinco escenarios (`tour`, `hang`, `moves`, `glide`, `sling`) y una pose para capturas. La ciudad añade 5 túneles de viento sobre avenidas y 14 corrientes ascendentes en azoteas (`demo/wind.gdshader`); `demo/demo_fx.gd` pone las líneas de velocidad y el audio procedural, y el maniquí dibuja las membranas de las Web Wings (`demo/wing.gdshader`). Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
+`godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un personaje animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. El traje (`demo/suit.gdshader`) reproduce la esfera de referencia: tela roja con microtextura hexagonal y telaraña negra brillante en relieve (radial en pecho y espalda, a lo largo de brazos y piernas), con la propia imagen de referencia proyectada como máscara (`demo/textures/suit_reference.webp`, importada con compresión S3TC). `demo/autopilot.gd` prueba el control real con seis escenarios (`tour`, `hang`, `moves`, `glide`, `sling`, `run`) y una pose para capturas. `demo/motion_trails.gd` dibuja las estelas de manos y pies. La ciudad añade 5 túneles de viento sobre avenidas y 14 corrientes ascendentes en azoteas (`demo/wind.gdshader`); `demo/demo_fx.gd` pone las líneas de velocidad y el audio procedural, y el maniquí dibuja las membranas de las Web Wings (`demo/wing.gdshader`). Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
 
 **Build reducido (28 MB).** `godot/export/build_slim_template.sh` compila una plantilla de exportación propia de Godot 4.7.2: renderer Compatibility (OpenGL 3.3) sin Vulkan/D3D12, solo los módulos que usa la demo (GDScript, FreeType, text server básico, física 3D de Godot), sin física/navegación 2D, XR ni GUI avanzada, y un *build profile* (`slim_template.build`) que desregistra 104 clases no usadas (partículas, GI, decals, sprites 3D, audio effects…) para que el enlazado con LTO elimine su código. Resultado: 109 MB → 28 MB. La misma configuración compilada para Linux reproduce exactamente la partida de referencia (mismo resumen de autopiloto) y renderiza igual.
 
@@ -1136,8 +1145,8 @@ InputMap: `move_left/right/forward/back`, `swing` (R2), `jump` (✕), `web_zip` 
 
 | Pieza | Validación realizada |
 |---|---|
-| Física (Python) | 26 tests unitarios (péndulo sostenido, loop con y sin *tighten*, planeo: fineza, picado/encabritado, pérdida con histéresis, viraje, impulso en picada, túnel con techo y centrado, corriente con inercia) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
-| Demo (Godot) | Autopiloto con escenarios `tour`, `hang` (mantener el clic: 1 sola web, quieto a los 7 s, W sube 12,6 → 5,1 m), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 139 km/h a altura constante 6 s; picada 48,6 m/s + alas = 56,5 m/s; alabeo 50°; pérdida; corriente +10 m) y `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), con el motor oficial y con la plantilla slim |
+| Física (Python) | 27 tests unitarios (péndulo sostenido, loop con y sin *tighten*, planeo: fineza, picado/encabritado, pérdida con histéresis, viraje rápido a cualquier velocidad, impulso en picada, túnel con techo y centrado, corriente con inercia) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
+| Demo (Godot) | Autopiloto con escenarios `tour`, `hang` (mantener el clic: 1 sola web, quieto a los 7 s, W sube 12,6 → 5,1 m), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 205 km/h a altura casi constante; picada 48,6 m/s + alas = 58,6 m/s; viraje de 78°/s a 58 m/s; timón de cámara 70° en 1,5 s; corriente +9 m) y `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), con el motor oficial y con la plantilla slim |
 | Baker de Blender | Test end-to-end con `bpy` 5.0.1 (trayectoria < 1 mm, curvas, IK, GLB con 42 canales) |
 | GDScript | Compila sin errores en Godot 4.7.2; la demo corre 120 s con autopiloto sin errores (balanceo, picada, wall run, aterrizajes) y el `.exe` exportado se validó cargando su PCK embebido. `AnimationTree`, IK de esqueleto y *look-at* no se han probado con un rig real (la demo usa un maniquí procedural) |
 

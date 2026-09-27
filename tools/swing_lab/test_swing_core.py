@@ -213,7 +213,7 @@ class LoopTests(unittest.TestCase):
             results.append((p.loops, p.length))
         self.assertEqual(results[0][0], 0)
         self.assertEqual(results[1][0], 1)
-        self.assertLess(results[1][1], 20.0)
+        self.assertLess(results[1][1], 22.0)
 
     def test_normal_swing_does_not_loop(self):
         p = RegulatedPendulum(SwingTuning())
@@ -239,15 +239,15 @@ class GliderTests(unittest.TestCase):
         a = V3(0, 500, 0)
         b = self.fly(g, 10.0)
         ratio = b.horizontal().length() / (a.y - b.y)
-        self.assertGreater(ratio, 7.0)
-        self.assertLess(ratio, 9.5)
-        self.assertAlmostEqual(g.speed, 20.7, delta=1.0)
+        self.assertGreater(ratio, 6.3)
+        self.assertLess(ratio, 8.0)
+        self.assertAlmostEqual(g.speed, 28.3, delta=1.0)
 
     def test_dive_gains_speed_and_pull_up_trades_it_for_height(self):
         g = Glider(SwingTuning())
         g.open(V3(0, 0, 20))
         self.fly(g, 12.0, pitch=1.0)
-        self.assertGreater(g.speed, 45.0)
+        self.assertGreater(g.speed, 60.0)
         start = V3(0, 500, 0)
         top = start
         pos = start
@@ -278,6 +278,15 @@ class GliderTests(unittest.TestCase):
         self.fly(g, 6.0, roll=1.0)
         self.assertLess(g.psi - psi0, -math.pi / 2)   # derecha = ψ decreciente
 
+    def test_turn_rate_is_fast_at_any_speed(self):
+        for speed, min_deg_s in ((25.0, 80.0), (65.0, 60.0)):
+            g = Glider(SwingTuning())
+            g.open(V3(0, 0, speed))
+            self.fly(g, 0.5, roll=1.0)                   # entra en alabeo
+            psi0 = g.psi
+            self.fly(g, 1.0, roll=1.0)
+            self.assertGreater(math.degrees(psi0 - g.psi), min_deg_s)
+
     def test_dive_open_boost(self):
         g = Glider(SwingTuning())
         g.open(V3(0, -40, 10), from_dive=True)
@@ -300,7 +309,7 @@ class GliderTests(unittest.TestCase):
             if i * H > 4.0:
                 max_off = max(max_off, offset.length())
         self.assertLess(max_off, 2.0)                    # sin stick, el túnel te lleva
-        self.assertGreater(g.speed, 34.0)
+        self.assertGreater(g.speed, 50.0)
         self.assertLess(g.speed, t.glide_tunnel_speed)   # empuje con techo
         g2 = Glider(SwingTuning())
         g2.open(V3(0, -2, 20))

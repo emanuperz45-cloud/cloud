@@ -92,12 +92,17 @@ func _process(delta: float) -> void:
 
 	var v := target.velocity
 	var spd := v.length()
-	# Tras 1 s sin tocar la cámara, se coloca detrás de la dirección de viaje.
-	if _idle > 1.0 and Vector2(v.x, v.z).length() > 8.0:
-		yaw = lerp_angle(yaw, atan2(-v.x, -v.z), 1.0 - exp(-1.6 * delta))
-
 	var st := target.state
 	var gliding := st == TraversalController.State.GLIDE
+	# Al planear, mover la cámara es timón (vira hacia donde miras) durante 0,6 s.
+	target.camera_steer_active = gliding and _idle < 0.6
+	# Sin tocar la cámara se coloca detrás de la dirección de viaje (planeando, rápido
+	# y casi enseguida para acompañar virajes de ~100°/s).
+	var wait := 0.35 if gliding else 1.0
+	var follow := 5.0 if gliding else 1.6
+	if _idle > wait and Vector2(v.x, v.z).length() > 8.0:
+		yaw = lerp_angle(yaw, atan2(-v.x, -v.z), 1.0 - exp(-follow * delta))
+
 	# Look-ahead: el foco se adelanta un poco en la dirección del movimiento.
 	var ahead := v * clampf(spd / 40.0, 0.0, 1.0) * 0.08
 	ahead.y *= 0.4
@@ -136,7 +141,9 @@ func _process(delta: float) -> void:
 	if target.state == TraversalController.State.SWING:
 		_shake = maxf(_shake, clampf((target.pendulum.g_force - 4.0) / 4.0, 0.0, 1.0) * 0.06)
 	elif gliding:
-		_shake = maxf(_shake, clampf((spd - 40.0) / 25.0, 0.0, 1.0) * 0.025 + target.in_tunnel * 0.015)
+		_shake = maxf(_shake, clampf((spd - 55.0) / 25.0, 0.0, 1.0) * 0.012)
 	_shake = move_toward(_shake, 0.0, delta * 0.3)
-	camera.h_offset = randf_range(-1.0, 1.0) * _shake
-	camera.v_offset = randf_range(-1.0, 1.0) * _shake
+	# Sacudida suave (suma de senos, ~5-9 Hz): el ruido aleatorio por frame se ve sucio.
+	var t := Time.get_ticks_msec() * 0.001
+	camera.h_offset = (sin(t * 37.0) * 0.6 + sin(t * 53.0 + 1.3) * 0.4) * _shake
+	camera.v_offset = (sin(t * 43.0 + 0.7) * 0.6 + sin(t * 31.0 + 2.1) * 0.4) * _shake

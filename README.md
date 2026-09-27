@@ -43,6 +43,7 @@ godot --headless --path godot --fixed-fps 60 -- --autopilot=26 --scenario=hang  
 godot --headless --path godot --fixed-fps 60 -- --autopilot=23 --scenario=moves  # moveset completo
 godot --headless --path godot --fixed-fps 60 -- --autopilot=20 --scenario=glide  # Web Wings y viento
 godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sling  # Slingshot y loop
+godot --headless --path godot --fixed-fps 60 -- --autopilot=4 --scenario=run     # sprint con curva
 ```
 
 Controles (moveset del original, ver §2.0 del documento):
@@ -56,11 +57,11 @@ Controles (moveset del original, ver §2.0 del documento):
 | Picada / girar una esquina corriendo por la pared | Mayús | B |
 | Point zip al punto amarillo | Q o clic derecho | LT / L2 |
 | Trucos según dirección; **mantenido en un balanceo rápido = loop** | F + WASD | LB + stick |
-| **Web Wings** en el aire (otra vez = plegar): W picar, S frenar/subir, A/D alabear; abrirlas en picada = impulso | G, Ctrl o rueda | Y |
+| **Web Wings** en el aire (otra vez = plegar): W picar, S frenar/subir, A/D girar (~97°/s); o gira la cámara con el ratón y vuela hacia donde miras; abrirlas en picada = impulso | G, Ctrl o rueda | Y |
 | **Super Slingshot**: mantener point zip y salto, soltar salto para lanzar (soltar point zip cancela) | Q + Espacio | LT + A |
 | Reaparecer / ayuda | R / H | Back / Start |
 
-En la ciudad hay **túneles de viento** (anillos azules sobre 5 avenidas) que llevan a ~140 km/h a
+En la ciudad hay **túneles de viento** (anillos azules sobre 5 avenidas) que llevan a ~205 km/h a
 quien entra planeando y **corrientes ascendentes** (columnas sobre rejillas en azoteas) que elevan.
 
 `tools/swing_lab/swing_core.py` es la fuente de verdad de la física; `godot/swing_system/regulated_pendulum.gd`

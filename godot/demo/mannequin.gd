@@ -13,8 +13,11 @@ extends Node3D
 ##  - acrobacias: volteretas y tirabuzones en sueltas, trucos, Quick Recovery, esquinas;
 ##  - Web Wings: brazos y piernas abiertos, membranas muñeca-hombro-cadera que se
 ##    despliegan, alabeo y cabeceo según el stick; Super Slingshot: tensado hacia atrás.
-## Las articulaciones siguen la pose con muelles amortiguados (ζ < 1): los brazos y
-## las piernas llegan con un pequeño rebote, que da peso a los cambios de pose.
+## Las articulaciones siguen la pose con muelles casi críticos (sin temblores): los
+## cambios de pose llegan suaves y con peso. Nada oscila a más de ~3 Hz (a 60 fps
+## una oscilación rápida se ve como vibración). En carrera: zancada con cadencia
+## natural, rebote de cadera y contrarrotación de hombros; el cuerpo se inclina
+## hacia dentro en las curvas y hacia delante con la velocidad.
 ## El frente del modelo es +Z y su derecha -X. Se actualiza en _physics_process
 ## para que la physics interpolation lo suavice.
 
@@ -27,6 +30,8 @@ const BLACK := Color(0.02, 0.02, 0.025)
 var controller: TraversalController
 var hand_socket_left: Node3D
 var hand_socket_right: Node3D
+var foot_socket_left: Node3D
+var foot_socket_right: Node3D
 
 var _pelvis: Node3D
 var _spine: Node3D
@@ -42,7 +47,9 @@ var _joint_vel := {}
 var _wings_open := 0.0
 var _wing_mesh := ImmediateMesh.new()
 var _wing_mat := ShaderMaterial.new()
-var _loop_spin := 0.0
+var _bob := 0.0
+var _prev_heading := 0.0
+var _turn_rate := 0.0
 
 
 func _ready() -> void:
@@ -191,6 +198,11 @@ func _build() -> void:
 		_part(knee, _capsule(0.063, 0.45), Vector3(0.0, -0.21, 0.0), _limb_mat(0.063, 0.45))
 		_part(knee, _capsule(0.052, 0.25), Vector3(0.0, -0.44, 0.06), _limb_mat(0.052, 0.25),
 				Vector3.ONE, Vector3(90.0, 0.0, 0.0))
+		var foot := _pivot(knee, Vector3(0.0, -0.45, 0.08))
+		if side > 0:
+			foot_socket_right = foot
+		else:
+			foot_socket_left = foot
 
 
 # ---------------------------------------------------------------------------
@@ -303,22 +315,25 @@ func _pose_fall(pose: Dictionary) -> void:
 			_leg(pose, 1, 0.0, 12.0, 5.0)
 			_leg(pose, -1, 0.0, 12.0, 5.0)
 		return
+	# Caída: silueta de paracaidista limpia; al subir se recoge, al caer se abre.
 	var rising := clampf(v.y / 15.0, -1.0, 1.0)
-	var flutter := sin(_time * 9.0) * clampf(-v.y / 40.0, 0.0, 1.0) * 10.0
-	_arm(pose, 1, 25.0 + flutter, 70.0, 25.0)
-	_arm(pose, -1, 25.0 - flutter, 70.0, 25.0)
-	_leg(pose, 1, 15.0 + rising * 25.0, 8.0, 25.0 + rising * 40.0)
-	_leg(pose, -1, 35.0 + rising * 20.0, 8.0, 60.0)
-	pose["spine"] = _q(8.0 + rising * 10.0)
-	pose["head"] = _q(-10.0)
+	var falling := clampf(-v.y / 35.0, 0.0, 1.0)
+	var sway := sin(_time * 2.2) * 4.0 * falling          # balanceo lento con el aire
+	_arm(pose, 1, lerpf(35.0, 10.0, falling) + sway, lerpf(55.0, 80.0, falling), lerpf(35.0, 15.0, falling))
+	_arm(pose, -1, lerpf(35.0, 10.0, falling) - sway, lerpf(55.0, 80.0, falling), lerpf(35.0, 15.0, falling))
+	_leg(pose, 1, 15.0 + rising * 25.0 - falling * 10.0, 8.0 + falling * 6.0, 25.0 + rising * 40.0)
+	_leg(pose, -1, 35.0 + rising * 20.0 - falling * 20.0, 8.0 + falling * 6.0, 60.0 - falling * 25.0)
+	pose["spine"] = _q(8.0 + rising * 10.0 - falling * 8.0)
+	pose["head"] = _q(-10.0 - falling * 15.0)
 
 
 func _pose_dive(pose: Dictionary) -> void:
-	var flutter := sin(_time * 16.0) * clampf(controller.velocity.length() / 58.0, 0.0, 1.0) * 4.0
-	_arm(pose, 1, 0.0, 10.0 + flutter, 5.0)
-	_arm(pose, -1, 0.0, 10.0 - flutter, 5.0)
-	_leg(pose, 1, flutter, 3.0, 5.0)
-	_leg(pose, -1, -flutter, 3.0, 5.0)
+	# Picada: flecha. Brazos pegados, piernas juntas y rectas; solo un vaivén lento.
+	var sway := sin(_time * 3.0) * clampf(controller.velocity.length() / 58.0, 0.0, 1.0) * 2.0
+	_arm(pose, 1, 0.0, 8.0 + sway, 4.0)
+	_arm(pose, -1, 0.0, 8.0 - sway, 4.0)
+	_leg(pose, 1, sway * 0.5, 2.0, 4.0)
+	_leg(pose, -1, -sway * 0.5, 2.0, 4.0)
 	pose["spine"] = _q(0.0)
 	pose["head"] = _q(-35.0)
 
@@ -338,23 +353,25 @@ func _pose_glide(pose: Dictionary) -> void:
 	var bank := c.wings.bank / deg_to_rad(c.tuning.glide_max_bank_deg)
 	var dive := maxf(pitch_in, 0.0)
 	var flare := maxf(-pitch_in, 0.0)
-	var buffet := sin(_time * 23.0) * clampf(c.wings.speed / 45.0, 0.0, 1.0) * 2.5
+	# Silueta limpia: brazos en línea recta, piernas juntas y estiradas. Solo un
+	# vaivén lento con el aire (en pérdida, un bamboleo algo mayor).
+	var sway := sin(_time * 2.4) * 1.5
 	if c.wings.stalled:
-		buffet += sin(_time * 11.0) * 8.0
+		sway = sin(_time * 4.5) * 6.0
 	for side in [1, -1]:
 		# Alabeo: el ala del lado del giro baja (hacia el pecho) y la otra sube.
-		var roll := bank * float(side) * 22.0
-		var out := lerpf(88.0, 58.0, dive) + flare * 18.0 + buffet * float(side)
-		_arm(pose, side, -6.0 + roll + flare * 18.0, out, 6.0 + dive * 14.0)
-		_leg(pose, side, -4.0 - flare * 10.0 + roll * 0.4, 9.0 + flare * 6.0 - dive * 5.0,
-				8.0 + flare * 30.0)
-	pose["spine"] = _q(-10.0 - flare * 8.0 + dive * 4.0)
-	pose["head"] = _q(-42.0 + dive * 12.0)
+		var roll := bank * float(side) * 18.0
+		var out := lerpf(90.0, 62.0, dive) + flare * 16.0 + sway * float(side)
+		_arm(pose, side, -4.0 + roll + flare * 16.0, out, 2.0 + dive * 10.0)
+		_leg(pose, side, -2.0 - flare * 10.0 + roll * 0.3, 5.0 + flare * 5.0 - dive * 3.0,
+				4.0 + flare * 26.0)
+	pose["spine"] = _q(-8.0 - flare * 8.0 + dive * 4.0)
+	pose["head"] = _q(-45.0 + dive * 12.0)
 
 
 func _pose_slingshot(pose: Dictionary) -> void:
 	var ch := controller.slingshot_charge
-	var shake := sin(_time * 40.0) * ch * ch * 3.0
+	var shake := sin(_time * 9.0) * ch * ch * 2.0         # tensión (lenta: sin vibración)
 	# Cada mano agarra su web (hacia su anclaje); el cuerpo se sienta hacia atrás.
 	for side in [1, -1]:
 		var anchor: Vector3 = controller.slingshot_anchors[1 if side > 0 else 0]
@@ -385,16 +402,25 @@ func _pose_hero_landing(pose: Dictionary) -> void:
 
 
 func _pose_run(pose: Dictionary, delta: float, speed: float, sprint: bool) -> void:
-	_cycle += delta * clampf(speed, 2.0, 25.0) * 0.9
+	# Cadencia natural: la velocidad sale sobre todo de la amplitud de la zancada,
+	# no de mover las piernas más rápido (de 1,1 a 1,7 ciclos/s).
+	var run01 := clampf(speed / 18.0, 0.0, 1.0)
+	_cycle += delta * lerpf(7.0, 10.5, run01)
 	var s := sin(_cycle)
 	var c := cos(_cycle)
-	var stride := 60.0 if sprint else 50.0
-	_leg(pose, 1, s * stride, 4.0, 20.0 + maxf(0.0, -c) * 85.0)
-	_leg(pose, -1, -s * stride, 4.0, 20.0 + maxf(0.0, c) * 85.0)
-	_arm(pose, 1, -s * 45.0, 10.0, 75.0)
-	_arm(pose, -1, s * 45.0, 10.0, 75.0)
-	pose["spine"] = _q(24.0 if sprint else 12.0)
-	pose["head"] = _q(-14.0 if sprint else -8.0)
+	var stride := lerpf(30.0, 62.0, run01)
+	# Pierna de apoyo casi recta; la que vuelve se recoge (talón al glúteo al esprintar).
+	_leg(pose, 1, s * stride + 8.0 * run01, 3.0, 12.0 + maxf(0.0, -c) * lerpf(50.0, 105.0, run01))
+	_leg(pose, -1, -s * stride + 8.0 * run01, 3.0, 12.0 + maxf(0.0, c) * lerpf(50.0, 105.0, run01))
+	var arm_swing := lerpf(25.0, 55.0, run01)
+	_arm(pose, 1, -s * arm_swing + 10.0, 8.0, lerpf(60.0, 90.0, run01))
+	_arm(pose, -1, s * arm_swing + 10.0, 8.0, lerpf(60.0, 90.0, run01))
+	# Inclinación hacia delante con la velocidad y contrarrotación de hombros.
+	var twist := Quaternion(Vector3.UP, s * deg_to_rad(10.0) * run01)
+	pose["spine"] = _q(lerpf(6.0, 26.0, run01) if sprint else lerpf(4.0, 14.0, run01)) * twist
+	pose["head"] = _q(-lerpf(4.0, 18.0, run01)) * twist.inverse()
+	# Rebote de cadera: dos por ciclo (uno por pisada), mínimo en el apoyo.
+	_bob = absf(c) * lerpf(0.03, 0.07, run01) - 0.03
 
 
 func _pose_crawl(pose: Dictionary, delta: float) -> void:
@@ -469,6 +495,7 @@ func _physics_process(delta: float) -> void:
 	var pose := {}
 	var rate := 16.0
 	var crouch := 0.0
+	_bob = 0.0
 	match c.state:
 		TraversalController.State.SWING:
 			if c.pendulum.sustain and c.pendulum.speed < 6.0:
@@ -517,9 +544,23 @@ func _physics_process(delta: float) -> void:
 	for key: String in pose:
 		_spring_joint(key, pose[key], rate, delta)
 
-	# Pelvis: inclinación al girar + acrobacias (voltereta / tirabuzón / giro).
-	var steer := c.move_input.x if c.state == TraversalController.State.SWING else 0.0
-	_lean = lerpf(_lean, -steer * deg_to_rad(22.0), k)
+	# Pelvis: inclinación hacia dentro de la curva + acrobacias. En el swing manda el
+	# stick; corriendo (suelo o pared) la aceleración centrípeta real ω·v.
+	var hv := RegulatedPendulum.flat(c.velocity)
+	var heading := atan2(hv.x, hv.z)
+	if hv.length() > 1.0:
+		var raw := wrapf(heading - _prev_heading, -PI, PI) / maxf(delta, 1e-4)
+		_turn_rate = lerpf(_turn_rate, clampf(raw, -4.0, 4.0), 1.0 - exp(-8.0 * delta))
+	else:
+		_turn_rate = lerpf(_turn_rate, 0.0, k)
+	_prev_heading = heading
+	var lean_target := 0.0
+	match c.state:
+		TraversalController.State.SWING:
+			lean_target = c.move_input.x * deg_to_rad(18.0)
+		TraversalController.State.GROUNDED:
+			lean_target = -atan(_turn_rate * hv.length() / 9.81) * 0.7
+	_lean = lerpf(_lean, clampf(lean_target, -0.5, 0.5), 1.0 - exp(-6.0 * delta))
 	var acro := Quaternion.IDENTITY
 	if _flip_t < 1.0:
 		_flip_t = minf(_flip_t + delta / _flip_time, 1.0)
@@ -527,7 +568,7 @@ func _physics_process(delta: float) -> void:
 	# Loop de loop: el cuerpo da la vuelta completa con la web (ya lo orienta el
 	# animador); aquí solo se añade el giro del tronco durante la vuelta.
 	_pelvis.quaternion = acro * Quaternion(Vector3.BACK, _lean)
-	_pelvis.position.y = lerpf(_pelvis.position.y, -crouch, k)
+	_pelvis.position.y = lerpf(_pelvis.position.y, -crouch + _bob, 1.0 - exp(-maxf(rate, 20.0) * delta))
 	_update_wings(delta)
 
 
@@ -543,8 +584,8 @@ func _spring_joint(key: String, target: Quaternion, rate: float, delta: float) -
 	var axis_angle := Vector3(dq.x, dq.y, dq.z) * 2.0
 	if s > 1e-4:
 		axis_angle = Vector3(dq.x, dq.y, dq.z) / s * (2.0 * acos(clampf(dq.w, -1.0, 1.0)))
-	var zeta := 0.9 if key in ["spine", "head", "pelvis"] else 0.62
-	var omega := rate * 1.1
+	var zeta := 1.0 if key in ["spine", "head", "pelvis"] else 0.85
+	var omega := rate
 	var w: Vector3 = _joint_vel.get(key, Vector3.ZERO)
 	w += (axis_angle * omega * omega - w * 2.0 * zeta * omega) * delta
 	w = w.limit_length(40.0)
@@ -565,7 +606,7 @@ func _update_wings(delta: float) -> void:
 		return
 	var open := smoothstep(0.0, 1.0, _wings_open)
 	var back := Vector3.BACK * -1.0            # la espalda (-Z local) mira al cielo al planear
-	var flutter := sin(_time * 31.0) * 0.012 * clampf(controller.velocity.length() / 40.0, 0.0, 1.0)
+	var flutter := sin(_time * 5.0) * 0.012 * clampf(controller.velocity.length() / 40.0, 0.0, 1.0)
 	_wing_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
 	for side in [1, -1]:
 		var s := _s(side)

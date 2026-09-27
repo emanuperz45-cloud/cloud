@@ -15,12 +15,12 @@ ESPACIO / A: en el balanceo salta (abajo = adelante, al final = arriba) · en el
 SUELO: clic mantenido = sprint (contra una fachada sube corriendo) · salta con clic = telaraña
 PARED: con clic corres, sin clic trepas · ESPACIO tira hacia arriba o salta de la pared
 MAYÚS / B: picada · en una esquina corriendo, gira la esquina con una telaraña
-G, CTRL, RUEDA / Y en el aire: WEB WINGS · W picar, S subir, A/D alabear
+G, CTRL, RUEDA / Y en el aire: WEB WINGS · W picar, S subir, A/D girar (o apunta con el ratón)
    ábrelas en picada = impulso · anillos azules = túnel de viento · columnas = corriente
 Q, CLIC DER / L2: point zip al punto amarillo, ESPACIO al llegar = Point Launch
    Q + ESPACIO mantenidos (suelo, posado, pared): SUPER SLINGSHOT, suelta ESPACIO
 F / LB + dirección: trucos · mantenido en un balanceo rápido: LOOP
-R: reaparecer · ESC: ratón · H: ocultar ayuda"""
+R: reaparecer · ESC: ratón · H: mostrar u ocultar esta ayuda"""
 
 var controller: TraversalController
 var camera_rig: CameraRig
@@ -30,6 +30,7 @@ var _banner: Label
 var _help: Label
 var _reticle: Control
 var _banner_time := 0.0
+var _help_auto_hide := 15.0       ## la ayuda se oculta sola (H la vuelve a mostrar)
 var _perch: Variant = null
 
 
@@ -71,6 +72,7 @@ func _ready() -> void:
 
 func set_help_visible(v: bool) -> void:
 	_help.visible = v
+	_help_auto_hide = 0.0
 
 
 func _label(size: int, pos: Vector2) -> Label:
@@ -102,8 +104,13 @@ func _process(delta: float) -> void:
 			int(c.global_position.y)]
 	_banner_time = maxf(_banner_time - delta, 0.0)
 	_banner.modulate.a = clampf(_banner_time / 0.4, 0.0, 1.0)
+	if _help_auto_hide > 0.0:
+		_help_auto_hide -= delta
+		if _help_auto_hide <= 0.0:
+			_help.visible = false
 	if Input.is_action_just_pressed("toggle_help"):
 		_help.visible = not _help.visible
+		_help_auto_hide = 0.0
 
 	_perch = null
 	if c.anchor_finder and c.state in [TraversalController.State.FALL, TraversalController.State.DIVE,

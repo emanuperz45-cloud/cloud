@@ -8,8 +8,9 @@ extends Node
 ##  moves: charge jump, web zip + quick zip, truco, colgarse y subir por la web,
 ##         sprint contra una fachada, wall run, trepar y salto de pared
 ##  pose : personaje quieto en la calle con la cámara de frente y cerca (traje)
+##  run  : sprint por la avenida x = 0 con una curva (capturas de la carrera)
 ##  glide: Web Wings desde lo alto: planeo, picada + alas (impulso), viraje,
-##         túnel de viento de la avenida x = 0 y corriente ascendente
+##         túnel de viento de la avenida x = 0, corriente ascendente y timón de cámara
 ##  sling: Super Slingshot desde el suelo (carga completa), cancelación y loop
 ##         (clic + truco mantenidos en un swing rápido)
 
@@ -33,6 +34,7 @@ var _tapped: Array[String] = []
 
 
 func _ready() -> void:
+	hud.set_help_visible(false)          # capturas limpias
 	player.web_fired.connect(func(_h: int, a: Vector3) -> void:
 		_count("web_fired")
 		_anchor = a)
@@ -98,10 +100,15 @@ func _physics_process(delta: float) -> void:
 			_glide()
 		"sling":
 			_sling()
+		"run":
+			if _at(0.02):
+				_place(Vector3(0.0, 0.95, 60.0), Vector3.FORWARD)
+			_press("move_forward", _t > 0.1)
+			_press("swing", _t > 0.1 and _t < 4.0)          # sprint
+			_press("move_right", _t > 2.4 and _t < 3.4)     # curva: inclinación hacia dentro
 		"pose":
 			if _at(0.02):
 				_place(Vector3(-4.0, 0.95, 3.0), Vector3.FORWARD)
-				hud.set_help_visible(false)
 			camera_rig.distance_override = 3.0
 			camera_rig.pitch = -0.18
 			camera_rig.look_towards(Vector3.BACK)          # cámara mirando de frente al personaje
@@ -239,8 +246,12 @@ func _glide() -> void:
 		_mark["boost_speed"] = snappedf(w.speed, 0.1)
 	# 3) Viraje a la derecha (alabeo) y encabritar hasta la pérdida.
 	_press("move_right", _t > 9.5 and _t < 11.0)
+	if _at(9.9):
+		_mark["_psi0"] = w.psi
 	if _at(10.9):
 		_mark["bank_deg"] = snappedf(rad_to_deg(w.bank), 0.1)
+		_mark["turn_deg_s"] = snappedf(rad_to_deg(float(_mark["_psi0"]) - w.psi), 0.1)   # derecha = ψ baja
+		_mark.erase("_psi0")
 	_press("move_back", _t > 11.2 and _t < 17.0)
 	if _t > 11.2 and _t < 17.0 and w.stalled:
 		_mark["stalled"] = true
@@ -260,6 +271,20 @@ func _glide() -> void:
 		_mark["updraft_y_max"] = maxf(_mark.get("updraft_y_max", -99.0), snappedf(player.global_position.y, 0.1))
 	if _at(19.5):
 		_mark["state_19s"] = hud._state_name()
+	# 5) Timón con la cámara: mirar 70° a la izquierda sin tocar el teclado.
+	if _at(19.6):
+		_place(Vector3(0.0, 200.0, 60.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+		player.velocity = Vector3(0.0, -3.0, -25.0)
+	if _at(19.7):
+		_tap("glide")
+	if _at(19.8):
+		_mark["_cam_psi0"] = w.psi
+	if _t > 19.8 and _t < 21.3:
+		camera_rig.look_towards(Vector3.FORWARD.rotated(Vector3.UP, deg_to_rad(70.0)))
+	if _at(21.3):
+		_mark["camera_turn_deg"] = snappedf(rad_to_deg(w.psi - float(_mark["_cam_psi0"])), 0.1)
+		_mark.erase("_cam_psi0")
 	_stats["glide"] = _mark
 
 

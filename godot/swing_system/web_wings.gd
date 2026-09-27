@@ -5,7 +5,7 @@ extends RefCounted
 ## Modelo de ángulo de trayectoria (γ) y rumbo (ψ):
 ##   dV/dt = -g·sin γ - k·V²·(1 + flare)   (+ empuje del túnel de viento)
 ## γ sigue al objetivo del stick a una tasa proporcional a V (en pérdida el morro
-## cae), ψ gira con viraje coordinado dψ/dt = g·tan φ / V. Stick adelante = picar.
+## cae), ψ gira proporcional al alabeo (hasta ~97°/s). Stick adelante = picar.
 
 var tuning: SwingTuning
 var speed := 0.0
@@ -66,7 +66,11 @@ func step(h: float, pitch_in: float, roll_in: float, tunnel_dir: Vector3 = Vecto
 	gamma += clampf(target - gamma, -rate, rate)
 
 	bank += (roll_in * deg_to_rad(t.glide_max_bank_deg) - bank) * (1.0 - exp(-t.glide_bank_rate * h))
-	psi -= g * tan(bank) / maxf(speed, 8.0) * h
+	# Viraje "arcade": tasa de giro proporcional al alabeo, casi independiente de la
+	# velocidad (un viraje coordinado g·tanφ/V sería lentísimo a 60 m/s).
+	var bank01 := bank / deg_to_rad(t.glide_max_bank_deg)
+	var fast := clampf((speed - 30.0) / 40.0, 0.0, 1.0)
+	psi -= bank01 * t.glide_turn_rate * lerpf(1.0, t.glide_turn_highspeed, fast) * h
 
 	var drift := Vector3.ZERO
 	if in_tunnel:

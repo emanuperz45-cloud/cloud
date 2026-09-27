@@ -84,6 +84,8 @@ var in_updraft := 0.0             ## 0..1 dentro de una corriente ascendente
 var slingshot_charge := 0.0       ## 0..1 tensando el Super Slingshot
 var slingshot_aim := Vector3.FORWARD
 var slingshot_anchors: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## [izquierda, derecha]
+## Lo pone la cámara: el jugador la está moviendo (planeando = timón hacia donde mira).
+var camera_steer_active := false
 var move_input := Vector2.ZERO
 var cam_forward := Vector3.FORWARD
 var cam_right := Vector3.RIGHT
@@ -769,8 +771,10 @@ func _update_glide(delta: float) -> void:
 		toff = wind_field.tunnel_offset
 		in_tunnel = wind_field.tunnel
 		in_updraft = wind_field.updraft
-	# Stick adelante (move_forward, y < 0) = picar, como en el original.
-	velocity = wings.step(delta, -move_input.y, move_input.x, tdir, in_tunnel, in_updraft, toff)
+	# Stick adelante (move_forward, y < 0) = picar, como en el original. El alabeo
+	# suma el stick y el timón de cámara: vira hacia donde mira la cámara.
+	var roll := clampf(move_input.x + _glide_camera_steer(), -1.0, 1.0)
+	velocity = wings.step(delta, -move_input.y, roll, tdir, in_tunnel, in_updraft, toff)
 	move_and_slide()
 
 	if is_on_floor():
@@ -798,6 +802,17 @@ func _update_glide(delta: float) -> void:
 		_start_zip()
 	elif Input.is_action_just_pressed("point_zip"):
 		_start_point_zip()
+
+
+## Alabeo que lleva el rumbo del planeo hacia el de la cámara (+1 = derecha).
+func _glide_camera_steer() -> float:
+	if camera == null or tuning.glide_camera_steer <= 0.0 or not camera_steer_active \
+			or absf(move_input.x) > 0.2:
+		return 0.0
+	var heading := Vector3(sin(wings.psi), 0.0, cos(wings.psi))
+	var ang := heading.signed_angle_to(cam_forward, Vector3.UP)    # + = cámara a la izquierda
+	return -clampf(ang / deg_to_rad(tuning.glide_camera_steer_deg), -1.0, 1.0) \
+			* tuning.glide_camera_steer
 
 
 # ---------------------------------------------------------------------------

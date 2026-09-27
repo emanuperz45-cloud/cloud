@@ -133,13 +133,13 @@ class SwingTuning:
     boost_accel_max: float = 18.0
     boost_sigma_deg: float = 30.0
     boost_gain: float = 3.0               # 1/s, ganancia proporcional del regulador
-    target_bottom_speed: float = 29.0     # velocidad de crucero en el fondo del arco
+    target_bottom_speed: float = 38.0     # velocidad de crucero en el fondo del arco
     altitude_energy_weight: float = 0.75  # 0 = ignora altura, 1 = energía total pura
     cruise_skyline_fraction: float = 0.5  # altura de crucero = fracción del skyline local
 
     # Límites de velocidad
-    speed_soft_cap: float = 34.0
-    speed_hard_cap: float = 48.0
+    speed_soft_cap: float = 42.0
+    speed_hard_cap: float = 55.0
     overspeed_drag: float = 0.03          # a = -k (|v| - soft)^2
     swing_air_drag: float = 0.0008        # cuadrática durante el balanceo
 
@@ -149,7 +149,7 @@ class SwingTuning:
 
     # Suelta (release)
     release_up_boost: float = 5.5
-    release_fwd_boost: float = 3.0
+    release_fwd_boost: float = 5.0
     release_perfect_angle_deg: float = 40.0
     release_perfect_window_deg: float = 9.0
     release_perfect_bonus: float = 0.45
@@ -176,7 +176,7 @@ class SwingTuning:
     dive_forward_accel: float = 4.0
 
     # Web zip / point launch
-    zip_speed: float = 26.0
+    zip_speed: float = 32.0
     zip_up_speed: float = 5.0
     zip_duration: float = 0.3
     point_launch_forward: float = 18.0
@@ -186,20 +186,22 @@ class SwingTuning:
     # Web Wings (planeo). Modelo de ángulo de trayectoria: la velocidad sobre el
     # aire cambia con -g·sin(γ) - k·V², el morro sigue al stick y el alabeo gira.
     glide_gravity: float = 9.81
-    glide_drag: float = 0.0028            # V_term planeo neutro ~21 m/s, picado ~52 m/s
-    glide_neutral_deg: float = -7.0       # sin input: planeo suave (fineza ~8:1)
+    glide_drag: float = 0.0015            # V_term planeo neutro ~30 m/s, picado ~70 m/s
+    glide_neutral_deg: float = -8.0       # sin input: planeo suave (fineza ~7:1)
     glide_dive_deg: float = -50.0         # stick adelante
     glide_climb_deg: float = 22.0         # stick atrás (encabritar)
-    glide_pitch_rate: float = 1.6         # rad/s de cambio de trayectoria a 20 m/s
-    glide_max_bank_deg: float = 50.0
-    glide_bank_rate: float = 4.0          # 1/s
+    glide_pitch_rate: float = 2.2         # rad/s de cambio de trayectoria a 20 m/s
+    glide_max_bank_deg: float = 65.0      # alabeo visual máximo
+    glide_bank_rate: float = 7.0          # 1/s
+    glide_turn_rate: float = 1.7          # rad/s de viraje con el stick a fondo (~97°/s)
+    glide_turn_highspeed: float = 0.7     # fracción del viraje que queda a 70 m/s
     glide_stall_speed: float = 9.0        # por debajo el morro cae solo
     glide_flare_drag: float = 0.8         # resistencia extra al encabritar
     glide_open_min_speed: float = 14.0
-    glide_dive_boost: float = 8.0         # abrir las alas en picada (> 30 m/s)
+    glide_dive_boost: float = 10.0        # abrir las alas en picada (> 30 m/s)
     glide_tunnel_accel: float = 26.0      # m/s² dentro de un túnel de viento alineado
     glide_tunnel_align: float = 1.5       # 1/s, asistencia hacia el eje del túnel
-    glide_tunnel_speed: float = 46.0      # el empuje se anula a esta velocidad (~38 m/s de crucero)
+    glide_tunnel_speed: float = 72.0      # el empuje se anula a esta velocidad (~57 m/s de crucero)
     glide_tunnel_authority: float = 0.8   # dentro del túnel el viento manda sobre el cabeceo
     glide_tunnel_center: float = 1.2      # 1/s, deriva hacia el eje del túnel
     glide_updraft_speed: float = 16.0     # m/s hacia arriba en una corriente ascendente
@@ -681,7 +683,11 @@ class Glider:
 
         self.bank += (roll_in * math.radians(t.glide_max_bank_deg) - self.bank) \
             * (1.0 - math.exp(-t.glide_bank_rate * h))
-        self.psi -= g * math.tan(self.bank) / max(self.speed, 8.0) * h
+        # Viraje "arcade": tasa de giro proporcional al alabeo, casi independiente de
+        # la velocidad (un viraje coordinado g·tanφ/V sería lentísimo a 60 m/s).
+        bank01 = self.bank / math.radians(t.glide_max_bank_deg)
+        fast = clamp((self.speed - 30.0) / 40.0, 0.0, 1.0)
+        self.psi -= bank01 * t.glide_turn_rate * lerp(1.0, t.glide_turn_highspeed, fast) * h
 
         drift = V3()
         if in_tunnel:

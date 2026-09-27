@@ -143,6 +143,12 @@ func _build_player() -> void:
 		add_child(web)
 		webs.append(web)
 
+	var trails := MotionTrails.new()
+	trails.controller = player
+	trails.sockets = [body.hand_socket_left, body.hand_socket_right,
+			body.foot_socket_left, body.foot_socket_right]
+	add_child(trails)
+
 	var animator := TraversalAnimator.new()
 	animator.controller = player
 	animator.visual_root = visual
