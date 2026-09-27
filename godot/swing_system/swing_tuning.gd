@@ -59,7 +59,7 @@ extends Resource
 @export var auto_release_angle_deg: float = 95.0
 @export var stall_speed: float = 3.0
 ## Con el gatillo mantenido, suelta sola aquí y re-dispara (swing encadenado).
-@export var chain_release_angle_deg: float = 55.0
+@export var chain_release_angle_deg: float = 35.0
 @export var reattach_delay: float = 0.15
 ## "Swing jump": salto al soltar (botón de salto durante el swing).
 @export var swing_jump_up: float = 6.0

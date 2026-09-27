@@ -5,3 +5,5 @@ venv/
 *.blend1
 /out/
 .godot/
+build/
+*.exe

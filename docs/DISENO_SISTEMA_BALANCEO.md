@@ -278,7 +278,7 @@ stateDiagram-v2
     Fall --> PointZip: botón point zip y perch visible
     PointZip --> Perch: llegada
     Perch --> Fall: salto (Point Launch) / gatillo
-    Swing --> Fall: suelta gatillo, salto, encadenado a 55 grados o auto-release
+    Swing --> Fall: suelta gatillo, salto, encadenado a 35 grados o auto-release
     Swing --> WallRun: impacto con pared
     Fall --> WallRun: impacto con pared
     WebZip --> WallRun: impacto con pared
@@ -310,7 +310,7 @@ stateDiagram-v2
 
 **Física:** `RegulatedPendulum.step` a 240 Hz; el cuerpo se mueve con `move_and_slide` hacia la posición propuesta; predicción F cada 0,1 s.
 
-**Salidas del estado:** soltar gatillo (suelta manual, evalúa ventana perfecta) · botón de salto (*swing jump*: suelta + $6\cdot(1+0{,}45\,[\text{perfecta}])$ m/s hacia arriba) · gatillo mantenido y $\theta_s\ge55^\circ$ (**encadenado automático**: suelta sin bonus y re-dispara en cuanto está en Fall > 0,15 s) · $\theta_s\ge95^\circ$ o $v<3$ m/s en subida (auto-release) · colisión (wall run) · suelo.
+**Salidas del estado:** soltar gatillo (suelta manual, evalúa ventana perfecta) · botón de salto (*swing jump*: suelta + $6\cdot(1+0{,}45\,[\text{perfecta}])$ m/s hacia arriba) · gatillo mantenido y $\theta_s\ge35^\circ$ (**encadenado automático**: suelta *sin* bonus de suelta perfecta y re-dispara en cuanto lleva 0,15 s en Fall; en simulación da ~30 m/s de crucero a altitud estable, frente a 17–18 m/s y deriva hacia arriba con 55°) · $\theta_s\ge95^\circ$ o $v<3$ m/s en subida (auto-release) · colisión (wall run) · suelo.
 
 | Sub-fase | Condición | Física dominante | Animación (lógica exacta) |
 |---|---|---|---|
@@ -647,7 +647,7 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 | `release_up_boost` / `release_fwd_boost` | 5,5 / 3,0 m/s | Forma del vuelo tras la suelta |
 | `release_max_up_speed` | 17 m/s | Evita lanzamientos cohete |
 | `release_band_height` | 12 m | Por encima de crucero + 12 m no hay boost vertical |
-| `chain_release_angle_deg` / `reattach_delay` | 55° / 0,15 s | Swing encadenado con el gatillo mantenido |
+| `chain_release_angle_deg` / `reattach_delay` | 35° / 0,15 s | Swing encadenado con el gatillo mantenido (sin bonus). 55° → 17–18 m/s y sube hasta ~80 m |
 | `steer_accel` / `lane_keep` | 16 m/s² / 1,2 s⁻¹ | Respuesta lateral / estabilidad de carril |
 | `anchor_ideal_forward/up/side` | 18 / 22 / 9 m | Punto ideal (×$k(v)\in[0{,}8,1{,}5]$) |
 | `anchor_min_height` / `anchor_max_distance` | 6 / 65 m | Filtros duros |
@@ -935,7 +935,11 @@ void TraversalSystem::PushAnimatorParameters(float dt)
 
 ## Apéndices
 
-### A. Estructura del repositorio
+### A. Demo jugable (Windows)
+
+`godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un maniquí animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
+
+### B. Estructura del repositorio
 
 ```
 docs/DISENO_SISTEMA_BALANCEO.md      ← este documento
@@ -956,7 +960,7 @@ godot/swing_system/
   web_line.gd                        ← web visual Verlet
 ```
 
-### B. Montaje de la escena en Godot
+### C. Montaje de la escena en Godot (con un personaje riggeado)
 
 ```
 Player (CharacterBody3D + traversal_controller.gd)   capa: Player · máscara: World
@@ -979,17 +983,17 @@ Camera rig (SpringArm3D + Camera3D) → traversal_controller.camera
 
 InputMap: `move_left/right/forward/back`, `swing` (R2), `jump` (✕), `web_zip` (✕ en el aire o botón dedicado), `point_zip` (L2+R2), `dive` (○ mantenido), `trick` (□).
 
-### C. Validación y límites conocidos
+### D. Validación y límites conocidos
 
 | Pieza | Validación realizada |
 |---|---|
 | Física (Python) | 14 tests unitarios + simulador; `python3 -m unittest discover -s tools/swing_lab` |
 | Baker de Blender | Test end-to-end con `bpy` 5.0.1 (trayectoria < 1 mm, curvas, IK, GLB con 42 canales) |
-| GDScript | `gdparse` + `gdlint` (gdtoolkit 4.5) sin errores. **No se ha ejecutado dentro del editor de Godot**: el primer paso de integración es montar la escena del Apéndice B y comparar una trayectoria de Godot contra `city_sim.py` con la misma semilla de edificios |
+| GDScript | Compila sin errores en Godot 4.7.2; la demo corre 120 s con autopiloto sin errores (balanceo, picada, wall run, aterrizajes) y el `.exe` exportado se validó cargando su PCK embebido. `AnimationTree`, IK de esqueleto y *look-at* no se han probado con un rig real (la demo usa un maniquí procedural) |
 
 Límites asumidos: la locomoción terrestre, la cámara y el combate quedan fuera; el *pose matching* de entrada se especifica (§3.4) pero no está implementado; las poses clave del baker se capturan a mano.
 
-### D. Referencias técnicas
+### E. Referencias técnicas
 - D. Bollo, *Inertialization: High-Performance Animation Transitions in Gears of War*, GDC 2018.
 - S. Clavet, *Motion Matching and The Road to Next-Gen Animation*, GDC 2016 (base del *pose matching* de la §3.4).
 - Documentación de Godot 4: `SkeletonModifier3D`, `AnimationTree`, `PhysicsDirectSpaceState3D`, `CharacterBody3D`.

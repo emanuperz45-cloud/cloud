@@ -303,12 +303,13 @@ class RegulatedPendulum:
         self.vel = v_t
         self.sample = SwingSample(rope_length=self.length, speed=v_t.length())
 
-    def release(self) -> tuple[V3, bool]:
-        """Devuelve (velocidad de salida, suelta perfecta)."""
+    def release(self, allow_perfect: bool = True) -> tuple[V3, bool]:
+        """Devuelve (velocidad de salida, suelta perfecta). allow_perfect=False
+        para sueltas automáticas (swing encadenado), que no reciben bonus."""
         t = self.t
         self.active = False
         ang = self.signed_angle_deg()
-        perfect = abs(ang - t.release_perfect_angle_deg) <= t.release_perfect_window_deg
+        perfect = allow_perfect and abs(ang - t.release_perfect_angle_deg) <= t.release_perfect_window_deg
         mult = 1.0 + t.release_perfect_bonus if perfect else 1.0
         up_scale = clamp(ang / t.release_perfect_angle_deg, 0.0, 1.0)
         if self.cruise_y is not None:

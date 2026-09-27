@@ -135,10 +135,12 @@ func attach(p_pos: Vector3, p_vel: Vector3, p_anchor: Vector3, p_travel: Vector3
 
 
 ## Devuelve la velocidad de salida; last_release_perfect indica si cayó en la ventana.
-func release() -> Vector3:
+## allow_perfect = false para sueltas automáticas (swing encadenado): sin bonus.
+func release(allow_perfect: bool = true) -> Vector3:
 	active = false
 	var ang := signed_angle_deg()
-	var perfect := absf(ang - tuning.release_perfect_angle_deg) <= tuning.release_perfect_window_deg
+	var perfect := allow_perfect \
+			and absf(ang - tuning.release_perfect_angle_deg) <= tuning.release_perfect_window_deg
 	var mult := 1.0 + tuning.release_perfect_bonus if perfect else 1.0
 	var up_scale := clampf(ang / tuning.release_perfect_angle_deg, 0.0, 1.0)
 	if not is_nan(cruise_y):

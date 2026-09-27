@@ -12,7 +12,7 @@ extends MeshInstance3D
 enum Phase { HIDDEN, SHOOTING, ATTACHED, RELEASED }
 
 @export var segments := 16
-@export var width := 0.035
+@export var width := 0.05
 @export var shoot_time := 0.09
 @export var fade_time := 0.6
 @export var gravity := 9.81
@@ -34,6 +34,7 @@ var _imesh := ImmediateMesh.new()
 
 func _ready() -> void:
 	top_level = true
+	physics_interpolation_mode = Node.PHYSICS_INTERPOLATION_MODE_OFF
 	global_transform = Transform3D.IDENTITY
 	mesh = _imesh
 	cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -64,7 +65,9 @@ func release() -> void:
 
 func _hand_pos() -> Vector3:
 	if is_instance_valid(_hand):
-		return _hand.global_position
+		# Posición interpolada: con physics interpolation la mano renderizada va
+		# por delante de global_position y la web se vería despegada.
+		return _hand.get_global_transform_interpolated().origin
 	return _points[0] if not _points.is_empty() else _anchor
 
 

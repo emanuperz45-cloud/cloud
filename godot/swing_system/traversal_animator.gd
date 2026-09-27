@@ -38,6 +38,8 @@ const STATE_NODES := {
 ## Raíz visual del personaje (hija del controller). Solo se rota, nunca se traslada.
 @export var visual_root: Node3D
 @export var web_line: WebLine
+## Segunda web opcional: al encadenar, la anterior termina su caída mientras sale la nueva.
+@export var web_line_alt: WebLine
 @export var hand_socket_left: Node3D     ## BoneAttachment3D en la muñeca
 @export var hand_socket_right: Node3D
 
@@ -72,6 +74,7 @@ var _one_shot_state := ""
 var _one_shot_timer := 0.0
 var _playback: AnimationNodeStateMachinePlayback
 var _current_node := ""
+var _active_web: WebLine
 
 
 func _ready() -> void:
@@ -161,13 +164,24 @@ func _on_web_fired(hand: int, anchor: Vector3) -> void:
 			anim_tree.set(P_FIRE_L, AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 		if hand >= TraversalController.HAND_BOTH:
 			anim_tree.set(P_FIRE_R, AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
-	if web_line:
-		web_line.fire(_socket(hand), anchor)
+	_active_web = _pick_web()
+	if _active_web:
+		_active_web.fire(_socket(hand), anchor)
+
+
+## Usa una web libre; si ambas están en uso, recicla la que ya se está soltando.
+func _pick_web() -> WebLine:
+	if web_line_alt == null:
+		return web_line
+	for w: WebLine in [web_line, web_line_alt]:
+		if w.phase == WebLine.Phase.HIDDEN:
+			return w
+	return web_line_alt if web_line.phase != WebLine.Phase.RELEASED else web_line
 
 
 func _on_web_released(_hand: int, perfect: bool) -> void:
-	if web_line:
-		web_line.release()
+	if _active_web:
+		_active_web.release()
 	if controller.last_release_chained:
 		# Swing encadenado: el brazo ya busca la siguiente web.
 		_one_shot_state = "Release_Reach"

@@ -47,6 +47,7 @@ var _zip_cooldown := 0.0
 var _predict_timer := 0.0
 var _avoid := Vector3.ZERO
 var _perch_target := Vector3.ZERO
+var _point_zip_timeout := 0.0
 var _jump_buffer := 0.0
 var _wall_run_speed := 0.0
 var _probe_shape := SphereShape3D.new()
@@ -140,7 +141,12 @@ func _update_grounded(delta: float) -> void:
 	velocity.z = move_toward(velocity.z, wish.z, 40.0 * delta)
 	velocity.y -= tuning.g * delta
 	move_and_slide()
-	if _jump_buffer > 0.0:
+	if Input.is_action_just_pressed("swing"):
+		# Como en el original: el gatillo desde el suelo salta y dispara.
+		velocity.y = 9.0
+		_set_state(State.FALL)
+		_try_attach()
+	elif _jump_buffer > 0.0:
 		_jump_buffer = 0.0
 		velocity.y = 9.0
 		_set_state(State.FALL)
@@ -263,7 +269,7 @@ func _update_swing(delta: float) -> void:
 
 
 func _release(swing_jump: bool, chained: bool = false) -> void:
-	var v := pendulum.release()
+	var v := pendulum.release(not chained)
 	last_release_perfect = pendulum.last_release_perfect
 	last_release_chained = chained
 	if swing_jump:
@@ -359,6 +365,7 @@ func _start_point_zip() -> bool:
 	if target == null:
 		return false
 	_perch_target = target
+	_point_zip_timeout = global_position.distance_to(_perch_target) / tuning.point_zip_speed + 0.6
 	_set_state(State.POINT_ZIP)
 	web_fired.emit(HAND_BOTH, _perch_target)
 	return true
@@ -368,14 +375,15 @@ func _update_point_zip(delta: float) -> void:
 	var to := _perch_target - global_position
 	var dist := to.length()
 	var spd := tuning.point_zip_speed * smoothstep(0.0, 0.12, state_time + delta)
-	if dist <= spd * delta or dist < 0.3:
+	if dist <= spd * delta or dist < 0.3 or state_time > _point_zip_timeout:
 		global_position = _perch_target
 		velocity = Vector3.ZERO
 		web_released.emit(HAND_BOTH, false)
 		_set_state(State.PERCH)
 		return
+	# Trayectoria guiada por la web: no se detiene en aristas de cornisas.
 	velocity = to / dist * spd
-	move_and_slide()
+	global_position += velocity * delta
 
 
 func _update_perch() -> void:
@@ -392,6 +400,8 @@ func _update_perch() -> void:
 		velocity = travel_dir * 6.0 + Vector3.UP * 4.0
 		_set_state(State.FALL)
 		_try_attach()
+	elif move_input.length() > 0.5:
+		_set_state(State.GROUNDED)    # bajarse del posado caminando
 
 
 # ---------------------------------------------------------------------------
