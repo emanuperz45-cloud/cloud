@@ -192,6 +192,7 @@ class SwingInput:
     steer: float = 0.0              # -1 (izq) .. 1 (der)
     steer_right: V3 | None = None   # vector derecho de cámara (horizontal)
     hold: bool = True               # gatillo de balanceo mantenido
+    external_accel: V3 | None = None  # asistencias del motor (evitación de colisiones)
 
 
 @dataclass
@@ -352,6 +353,9 @@ class RegulatedPendulum:
             acc = acc + s_t * (inp.steer * t.steer_accel)
             acc = acc - s_t * (self.vel.dot(s_t) * t.lane_keep * (1.0 - abs(inp.steer)))
 
+        if inp.external_accel is not None:
+            acc = acc + project_on_plane(inp.external_accel, n)
+
         # 4) Arrastre + techo blando de velocidad
         acc = acc - self.vel * (t.swing_air_drag * speed)
         if speed > t.speed_soft_cap:
@@ -380,7 +384,9 @@ class RegulatedPendulum:
                 self.vel = self.vel - n * v_r
                 after = self.vel.length()
                 if after > 1.0:
-                    self.vel = self.vel * (before / after)
+                    # retention = 1 conserva la rapidez (redirección total);
+                    # retention = 0 es la proyección física clásica.
+                    self.vel = self.vel * (lerp(after, before, t.catch_retention) / after)
             if self.length < l_prev:
                 # Conservación de momento angular al recoger cuerda.
                 v_rad = n * self.vel.dot(n)
