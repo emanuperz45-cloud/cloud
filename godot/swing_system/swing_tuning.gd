@@ -58,11 +58,19 @@ extends Resource
 @export var release_band_height: float = 12.0
 @export var auto_release_angle_deg: float = 95.0
 @export var stall_speed: float = 3.0
-## Con el gatillo mantenido, suelta sola aquí y re-dispara (swing encadenado).
-@export var chain_release_angle_deg: float = 35.0
+## Gatillo mantenido = misma telaraña (sin suelta automática). Tras la primera
+## inversión el arco se amortigua hasta quedar colgado del anclaje.
+@export var hang_damping: float = 0.75
+@export var hang_pivot_rate: float = 0.8
+@export var hang_wall_offset: float = 1.0
+@export var reel_climb_speed: float = 5.0
+@export var hang_min_length: float = 4.0
 @export var reattach_delay: float = 0.15
-## "Swing jump": salto al soltar (botón de salto durante el swing).
-@export var swing_jump_up: float = 6.0
+## "Swing jump" (salto durante el swing): en el fondo del arco lanza hacia
+## delante, al final del arco hacia arriba (como en el original).
+@export var swing_jump_up: float = 9.0
+@export var swing_jump_forward: float = 9.0
+@export var hang_jump_up: float = 12.0
 
 @export_group("Caída libre / picada")
 @export var fall_drag: float = 0.011
@@ -75,7 +83,9 @@ extends Resource
 @export var zip_speed: float = 26.0
 @export var zip_up_speed: float = 5.0
 @export var zip_duration: float = 0.3
-@export var zip_cooldown: float = 0.35
+@export var zip_cooldown: float = 0.25
+## Quick Zip: un segundo zip seguido no pierde altura.
+@export var quick_zip_window: float = 1.0
 @export var point_zip_speed: float = 38.0
 @export var point_launch_forward: float = 18.0
 @export var point_launch_up: float = 19.0
@@ -92,6 +102,15 @@ extends Resource
 @export var anchor_speed_scale_min: float = 0.8
 @export var anchor_speed_scale_max: float = 1.5
 
+@export_group("Suelo")
+@export var run_speed: float = 9.0
+@export var sprint_speed: float = 14.0
+@export var jump_speed: float = 9.0
+@export var charge_jump_speed: float = 25.0
+@export var charge_jump_time: float = 0.7
+@export var quick_recovery_window: float = 0.45
+@export var quick_recovery_up: float = 13.0
+
 @export_group("Wall run")
 @export var wall_run_min_speed: float = 9.0
 @export var wall_run_vertical_angle_deg: float = 40.0
@@ -101,6 +120,11 @@ extends Resource
 @export var wall_run_max_time: float = 2.5
 @export var wall_jump_out: float = 11.0
 @export var wall_jump_up: float = 9.0
+@export var wall_crawl_speed: float = 5.0
+@export var wall_web_pull: float = 14.0
+@export var wall_run_max_speed: float = 30.0
+@export var corner_launch_boost: float = 6.0
+@export var corner_turn_buffer: float = 0.5
 
 @export_group("Solver")
 @export var substep: float = 1.0 / 240.0

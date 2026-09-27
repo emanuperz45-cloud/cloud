@@ -36,12 +36,24 @@ godot --headless --path godot --export-release "Windows Desktop" build/WebSwingD
 godot/export/build_slim_template.sh /ruta/a/godot-4.7.2-stable windows
 cp /ruta/a/godot-4.7.2-stable/bin/godot.windows.template_release.x86_64.slim.exe godot/build/templates/
 godot --headless --path godot --export-release "Windows Slim" build/WebSwingDemo.exe
-# Prueba automática sin interfaz (autopiloto 120 s, imprime un resumen):
-godot --headless --path godot --fixed-fps 60 -- --autopilot=120
+# Pruebas automáticas sin interfaz (imprimen un resumen JSON):
+godot --headless --path godot --fixed-fps 60 -- --autopilot=120 --scenario=tour
+godot --headless --path godot --fixed-fps 60 -- --autopilot=26 --scenario=hang   # mantener el clic
+godot --headless --path godot --fixed-fps 60 -- --autopilot=23 --scenario=moves  # moveset completo
 ```
 
-Controles: mantener clic izquierdo / R2 para balancearse, Espacio / A salto, Mayús / B picada,
-E / X web zip, Q / L2 point zip, F / Y truco, WASD + ratón (o sticks), R reaparecer.
+Controles (moveset del original, ver §2.0 del documento):
+
+| Acción | Teclado y ratón | Mando |
+|---|---|---|
+| Balanceo: **mantener = misma telaraña** (se amortigua hasta quedar colgado); soltar = soltarse | Clic izquierdo | RT / R2 |
+| Colgado: subir / bajar por la telaraña | W / S | Stick izq. |
+| Salto: en el swing (abajo = adelante, final = arriba), Web Zip en el aire (Quick Zip si repites), Charge Jump manteniendo en el suelo, Quick Recovery al rodar, Point Launch al llegar a un perch, tirón hacia arriba o salto en una pared | Espacio | A |
+| Sprint (suelo) / correr por la pared (sin clic se trepa) | Clic izq. mantenido | RT / R2 |
+| Picada / girar una esquina corriendo por la pared | Mayús | B |
+| Point zip al punto amarillo | Q o clic derecho | LT / L2 |
+| Trucos según dirección | F + WASD | Y + stick |
+| Reaparecer / ayuda | R / H | Back / Start |
 
 `tools/swing_lab/swing_core.py` es la fuente de verdad de la física; `godot/swing_system/regulated_pendulum.gd`
 es un port 1:1. Si cambias un parámetro, cámbialo en ambos (`SwingTuning`) y vuelve a correr el simulador.

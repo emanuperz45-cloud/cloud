@@ -246,10 +246,15 @@ func _update_orientation(delta: float) -> void:
 			if fwd.length_squared() < 1e-4:
 				fwd = c.travel_dir
 		TraversalController.State.WALL_RUN:
-			# La pared es el "suelo": los ciclos de carrera se reutilizan rotados.
-			up = c.wall_normal
-			fwd = Vector3.UP if c.wall_vertical else RegulatedPendulum.safe_normalized(
-					RegulatedPendulum.project_on_plane(v, c.wall_normal), fwd)
+			if c.wall_crawl:
+				# Gateando: pegado a la fachada, cabeza arriba, pecho contra la pared.
+				up = RegulatedPendulum.project_on_plane(Vector3.UP, c.wall_normal).normalized()
+				fwd = -c.wall_normal
+			else:
+				# Corriendo: la pared es el "suelo" y el ciclo de carrera se rota.
+				up = c.wall_normal
+				fwd = Vector3.UP if c.wall_vertical else RegulatedPendulum.safe_normalized(
+						RegulatedPendulum.project_on_plane(v, c.wall_normal), fwd)
 			rate = orient_rate_swing
 		TraversalController.State.FALL, TraversalController.State.WEB_ZIP:
 			# Inclinación hacia la aceleración percibida (overlap del torso).

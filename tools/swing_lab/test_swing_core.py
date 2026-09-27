@@ -131,6 +131,54 @@ class AssistTests(unittest.TestCase):
         self.assertLessEqual(math.degrees(math.acos(va.dot(vp))), self.t.pivot_max_divergence_deg + 1e-6)
 
 
+class HoldToHangTests(unittest.TestCase):
+    """Mantener el gatillo: misma telaraña, el arco se apaga y queda colgado."""
+
+    def attach(self):
+        t = SwingTuning()
+        p = RegulatedPendulum(t)
+        anchor = V3(-12.0, 80.0, 20.0)            # en una fachada a la derecha
+        p.attach(V3(0, 55, 0), V3(0, -4, 22), anchor, V3(0, 0, 1), ground_y=0.0)
+        return t, p, anchor
+
+    def test_no_release_and_settles_under_anchor(self):
+        t, p, anchor = self.attach()
+        for _ in range(int(18.0 / H)):
+            p.step(H, SwingInput(hold=True))
+            self.assertLessEqual((p.pos - p.pivot).length(), p.length + 1e-6)
+        self.assertTrue(p.sustain)
+        self.assertLess(p.vel.length(), 0.5)                    # quieto, suspendido
+        off = (p.pivot - anchor).horizontal().length()
+        self.assertLessEqual(off, t.hang_wall_offset + 0.05)    # bajo el anclaje real
+        self.assertAlmostEqual(p.pos.x, p.pivot.x, delta=0.3)   # colgando en vertical
+        self.assertGreater(p.pos.y, t.ground_clearance)
+
+    def test_first_arc_keeps_boost_until_reversal(self):
+        _, p, _ = self.attach()
+        seen_boost = False
+        while not p.sustain:
+            s = p.step(H, SwingInput(hold=True))
+            seen_boost |= s.boost > 0.0
+        self.assertTrue(seen_boost)
+        self.assertLess(p.signed_angle_deg(), 0.0)              # empezó la vuelta
+
+    def test_reel_climbs_and_descends_the_web(self):
+        t, p, _ = self.attach()
+        for _ in range(int(12.0 / H)):
+            p.step(H)
+        start = p.length
+        for _ in range(int(1.0 / H)):
+            p.step(H, SwingInput(reel=1.0))
+        self.assertAlmostEqual(p.length, start - t.reel_climb_speed, delta=0.3)
+        for _ in range(int(30.0 / H)):
+            p.step(H, SwingInput(reel=1.0))
+        self.assertAlmostEqual(p.length, t.hang_min_length, delta=1e-6)
+        for _ in range(int(60.0 / H)):
+            p.step(H, SwingInput(reel=-1.0))
+        self.assertLessEqual(p.bottom_y(), p.pivot.y)
+        self.assertGreaterEqual(p.bottom_y(), p.ground_y + t.ground_clearance - 1e-6)
+
+
 class AirAndAnchorTests(unittest.TestCase):
     def test_freefall_reaches_terminal_velocity(self):
         t = SwingTuning()

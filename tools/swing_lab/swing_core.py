@@ -158,6 +158,14 @@ class SwingTuning:
     auto_release_angle_deg: float = 95.0
     stall_speed: float = 3.0
 
+    # Péndulo sostenido: con el gatillo mantenido NO se suelta sola. Tras la
+    # primera inversión el arco se amortigua hasta quedar colgado del anclaje.
+    hang_damping: float = 0.75            # 1/s sobre la velocidad tangencial
+    hang_pivot_rate: float = 0.8          # 1/s, el pivote converge al anclaje real
+    hang_wall_offset: float = 1.0         # m de separación de la fachada al colgar
+    reel_climb_speed: float = 5.0         # m/s subiendo/bajando por la telaraña
+    hang_min_length: float = 4.0
+
     # Caída libre / picada
     fall_drag: float = 0.011              # v_term = sqrt(g_fall / k) ~ 40 m/s
     dive_drag: float = 0.0076             # v_term ~ 58 m/s
@@ -193,6 +201,7 @@ class SwingInput:
     steer_right: V3 | None = None   # vector derecho de cámara (horizontal)
     hold: bool = True               # gatillo de balanceo mantenido
     external_accel: V3 | None = None  # asistencias del motor (evitación de colisiones)
+    reel: float = 0.0               # colgado: +1 sube por la telaraña, -1 baja
 
 
 @dataclass
@@ -230,6 +239,9 @@ class RegulatedPendulum:
         self.cruise_y: float | None = None
         self.time = 0.0
         self.sample = SwingSample()
+        self.sustain = False          # tras la 1.ª inversión: arco amortiguado / colgado
+        self.hang_pivot = V3()
+        self._prev_ang = 0.0
 
     # -- helpers ----------------------------------------------------------
     def rope_dir(self) -> V3:
@@ -284,6 +296,11 @@ class RegulatedPendulum:
         self.cruise_y = cruise_y
         self.pivot = self.solve_pivot(pos, anchor, self.travel)
         self.length = clamp((pos - self.pivot).length(), t.rope_min, t.rope_max)
+        # Al colgar, el pivote vuelve al anclaje real pero separado de la
+        # fachada en la dirección en la que el pivote regulado ya la separaba.
+        away = (self.pivot - anchor).horizontal()
+        self.hang_pivot = anchor + away.normalized() * min(t.hang_wall_offset, away.length())
+        self.sustain = False
 
         # Conservación de momento: la componente que se aleja del pivote se
         # redirige al plano tangente en vez de perderse (el "catch").
@@ -302,6 +319,7 @@ class RegulatedPendulum:
             v_t = v_t + tan_fwd * (t.attach_min_tangent_speed - along)
         self.vel = v_t
         self.sample = SwingSample(rope_length=self.length, speed=v_t.length())
+        self._prev_ang = self.signed_angle_deg()
 
     def release(self, allow_perfect: bool = True) -> tuple[V3, bool]:
         """Devuelve (velocidad de salida, suelta perfecta). allow_perfect=False
@@ -331,8 +349,17 @@ class RegulatedPendulum:
         n = self.rope_dir()
         ang = self.signed_angle_deg()
 
-        # 1) Gravedad asimétrica
+        # 0) Péndulo sostenido: la primera vez que el arco se invierte (subía y
+        # ahora baja) o si apenas hay velocidad, pasa a modo amortiguado.
+        if inp.hold and not self.sustain and ((self._prev_ang > 3.0 and ang < 0.0)
+                                              or (self.time > 0.5 and self.vel.length() < 1.0)):
+            self.sustain = True
+        self._prev_ang = ang
+
+        # 1) Gravedad asimétrica (simétrica al colgar: la asimetría bombea energía)
         g_scale = t.gravity_scale_swing_down if self.vel.y < 0.0 else t.gravity_scale_swing_up
+        if self.sustain:
+            g_scale = t.gravity_scale_swing_down
         g_eff = t.g * g_scale
         acc = V3(0.0, -g_eff, 0.0)
 
@@ -343,7 +370,7 @@ class RegulatedPendulum:
         drop = max(self.pos.y - self.bottom_y(), 0.0)
         v_bottom_pred = math.sqrt(speed * speed + 2.0 * g_eff * drop)
         boost = 0.0
-        if inp.hold:
+        if inp.hold and not self.sustain:
             err = self.goal_bottom_speed(g_eff) - v_bottom_pred
             boost = clamp(t.boost_gain * err, 0.0, t.boost_accel_max) * bell(ang, t.boost_sigma_deg)
             acc = acc + v_hat * boost
@@ -356,6 +383,9 @@ class RegulatedPendulum:
 
         if inp.external_accel is not None:
             acc = acc + project_on_plane(inp.external_accel, n)
+        if self.sustain:
+            acc = acc - project_on_plane(self.vel, n) * t.hang_damping
+            self.pivot = self.pivot + (self.hang_pivot - self.pivot) * (1.0 - math.exp(-t.hang_pivot_rate * h))
 
         # 4) Arrastre + techo blando de velocidad
         acc = acc - self.vel * (t.swing_air_drag * speed)
@@ -369,8 +399,15 @@ class RegulatedPendulum:
         # 5) Regulación de longitud (clearance con el suelo) + spin-up
         l_prev = self.length
         max_len = self.pivot.y - (self.ground_y + t.ground_clearance)
-        l_target = clamp(min(self.length, max_len), t.rope_min, t.rope_max)
+        min_len = t.rope_min
+        if self.sustain:
+            # Subir/bajar por la telaraña (W/S) mientras se está colgado.
+            min_len = t.hang_min_length
+            self.length -= inp.reel * t.reel_climb_speed * h
+        l_target = clamp(min(self.length, max_len), min_len, t.rope_max)
         self.length = move_toward(self.length, l_target, t.reel_speed * h)
+        if self.length < l_target:
+            self.length = l_target
 
         # 6) Restricción unilateral con proyección que preserva la rapidez
         d_vec = self.pos - self.pivot

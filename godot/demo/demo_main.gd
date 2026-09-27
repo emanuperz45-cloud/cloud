@@ -4,8 +4,8 @@ extends Node3D
 ## Arma todo por código (entorno, ciudad, jugador, cámara, HUD) para que la
 ## escena no dependa de assets importados. Argumentos de línea de comandos
 ## (después de `--`), usados para probar builds sin interfaz:
-##   --autopilot=SEGUNDOS   mantiene el gatillo, encadena balanceos y sale con un resumen
-##   --screenshot=RUTA      guarda una captura a mitad del autopiloto
+##   --autopilot=SEGUNDOS [--scenario=tour|hang|moves] [--shots=t1,t2 --shot-prefix=RUTA]
+## (ver demo/autopilot.gd).
 
 const CITY_SEED := 20180907
 const SPAWN := Vector3(0.0, 75.0, 40.0)
@@ -15,11 +15,10 @@ var camera_rig: CameraRig
 var hud: DemoHud
 
 var _autopilot := -1.0
+var _scenario := "tour"
+var _shots: Array[float] = []
+var _shot_prefix := ""
 var _bounds := INF
-var _screenshot := ""
-var _elapsed := 0.0
-var _stats := {"swings": 0, "perfect": 0, "wall_runs": 0, "landings": 0, "max_speed": 0.0,
-		"min_y": INF, "max_y": -INF, "time_in": {}}
 
 
 func _ready() -> void:
@@ -43,14 +42,31 @@ func _ready() -> void:
 	get_window().title = "Web Swing Demo — %d edificios" % city.building_count
 	if _autopilot < 0.0:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+	else:
+		var pilot := DemoAutopilot.new()
+		pilot.main = self
+		pilot.player = player
+		pilot.camera_rig = camera_rig
+		pilot.hud = hud
+		pilot.duration = _autopilot
+		pilot.scenario = _scenario
+		pilot.shots = _shots
+		pilot.shot_prefix = _shot_prefix
+		add_child(pilot)
 
 
 func _parse_args() -> void:
 	for arg in OS.get_cmdline_user_args():
+		var value := arg.get_slice("=", 1)
 		if arg.begins_with("--autopilot="):
-			_autopilot = arg.get_slice("=", 1).to_float()
-		elif arg.begins_with("--screenshot="):
-			_screenshot = arg.get_slice("=", 1)
+			_autopilot = value.to_float()
+		elif arg.begins_with("--scenario="):
+			_scenario = value
+		elif arg.begins_with("--shots="):
+			for t in value.split(","):
+				_shots.append(t.to_float())
+		elif arg.begins_with("--shot-prefix="):
+			_shot_prefix = value
 
 
 func _build_environment() -> void:
@@ -132,13 +148,6 @@ func _build_player() -> void:
 	animator.hand_socket_right = body.hand_socket_right
 	player.add_child(animator)
 
-	player.web_fired.connect(func(_h: int, _a: Vector3) -> void: _stats.swings += 1)
-	player.web_released.connect(func(_h: int, perfect: bool) -> void:
-		if perfect:
-			_stats.perfect += 1)
-	player.wall_run_started.connect(func(_v: bool) -> void: _stats.wall_runs += 1)
-	player.landed.connect(func(_s: float) -> void: _stats.landings += 1)
-
 
 func respawn() -> void:
 	player.global_position = SPAWN
@@ -159,59 +168,8 @@ func _unhandled_input(event: InputEvent) -> void:
 		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
 
 
-func _physics_process(delta: float) -> void:
-	_elapsed += delta
+func _physics_process(_delta: float) -> void:
 	var p := player.global_position
 	var outside := maxf(absf(p.x), absf(p.z)) > _bounds
 	if Input.is_action_just_pressed("respawn") or p.y < -30.0 or outside or not p.is_finite():
 		respawn()
-	if _autopilot >= 0.0:
-		_run_autopilot(delta)
-
-
-# ---------------------------------------------------------------------------
-# Autopiloto para probar builds sin interfaz
-# ---------------------------------------------------------------------------
-func _run_autopilot(delta: float) -> void:
-	var p := player.global_position
-	if player.velocity.length() > _stats.max_speed:
-		_stats.max_speed = player.velocity.length()
-		_stats.max_speed_state = DemoHud.STATE_NAMES[player.state]
-	_stats.min_y = minf(_stats.min_y, p.y)
-	_stats.max_y = maxf(_stats.max_y, p.y)
-	var st: String = DemoHud.STATE_NAMES[player.state]
-	_stats.time_in[st] = _stats.time_in.get(st, 0.0) + delta
-
-	# Recorre un circuito alrededor del centro para no salirse de la ciudad.
-	var around := atan2(p.x, p.z) + 0.5
-	var waypoint := Vector3(sin(around), 0.0, cos(around)) * 300.0
-	camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
-	Input.action_press("move_forward")
-	# Gatillo mantenido (swing encadenado); en el suelo hay que volver a pulsarlo.
-	if player.state == TraversalController.State.GROUNDED and int(_elapsed * 60.0) % 30 == 0:
-		Input.action_release("swing")
-	else:
-		Input.action_press("swing")
-	# Picada de vez en cuando para probar la transición picada -> swing.
-	var cycle := fmod(_elapsed, 9.0)
-	if cycle > 6.0 and cycle < 7.0 and p.y > 45.0:
-		Input.action_press("dive")
-	else:
-		Input.action_release("dive")
-	if int(_elapsed * 60.0) % 60 == 0:
-		print("[autopilot] t=%5.1f %-9s pos=(%7.1f, %5.1f, %7.1f) v=%5.1f m/s G=%.1f" % [
-				_elapsed, st, p.x, p.y, p.z, player.velocity.length(), player.pendulum.g_force])
-	# Captura en el fondo de un balanceo (web tensa, máxima compresión).
-	var bottom := player.state == TraversalController.State.SWING \
-			and absf(player.pendulum.phase) < 0.15 and player.pendulum.taut
-	if _screenshot != "" and _elapsed > 1.5 and (bottom or _elapsed >= _autopilot * 0.9):
-		var img := get_viewport().get_texture().get_image()
-		if img:
-			img.save_png(_screenshot)
-			print("[autopilot] captura -> ", _screenshot, " estado ", st)
-		_screenshot = ""
-	if _elapsed >= _autopilot:
-		Input.action_release("swing")
-		Input.action_release("move_forward")
-		print("[autopilot] RESUMEN ", JSON.stringify(_stats))
-		get_tree().quit()

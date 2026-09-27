@@ -30,6 +30,11 @@ var taut := false
 var boost := 0.0
 var speed := 0.0
 var last_release_perfect := false
+## Péndulo sostenido: tras la primera inversión con el gatillo mantenido, el
+## arco se amortigua y el pivote converge al anclaje real (queda colgado).
+var sustain := false
+var hang_pivot := Vector3.ZERO
+var _prev_ang := 0.0
 
 
 func _init(p_tuning: SwingTuning) -> void:
@@ -47,6 +52,10 @@ func duplicate_state() -> RegulatedPendulum:
 	p.length = length
 	p.ground_y = ground_y
 	p.cruise_y = cruise_y
+	p.sustain = sustain
+	p.hang_pivot = hang_pivot
+	p._prev_ang = _prev_ang
+	p.time = time
 	return p
 
 
@@ -114,6 +123,10 @@ func attach(p_pos: Vector3, p_vel: Vector3, p_anchor: Vector3, p_travel: Vector3
 	cruise_y = p_cruise_y
 	pivot = solve_pivot(p_pos, p_anchor, travel)
 	length = clampf((p_pos - pivot).length(), tuning.rope_min, tuning.rope_max)
+	var away := flat(pivot - p_anchor)
+	hang_pivot = p_anchor + safe_normalized(away, Vector3.ZERO) \
+			* minf(tuning.hang_wall_offset, away.length())
+	sustain = false
 
 	# Catch: la componente que se aleja del pivote se redirige al plano tangente.
 	var n := rope_dir()
@@ -132,6 +145,7 @@ func attach(p_pos: Vector3, p_vel: Vector3, p_anchor: Vector3, p_travel: Vector3
 	speed = vel.length()
 	swing_angle_deg = signed_angle_deg()
 	phase = clampf(swing_angle_deg / PHASE_REF_DEG, -1.0, 1.0)
+	_prev_ang = swing_angle_deg
 
 
 ## Devuelve la velocidad de salida; last_release_perfect indica si cayó en la ventana.
@@ -163,15 +177,24 @@ func goal_bottom_speed(g_eff: float) -> float:
 	return clampf(sqrt(maxf(goal_sq, 0.0)), tuning.attach_min_tangent_speed, tuning.speed_soft_cap)
 
 
-## Un sub-paso de integración. steer en [-1, 1]; steer_right = derecha de cámara.
+## Un sub-paso de integración. steer en [-1, 1]; steer_right = derecha de cámara;
+## reel en [-1, 1] sube (+) o baja (-) por la telaraña cuando está colgado.
 func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
-		hold: bool = true, external_accel: Vector3 = Vector3.ZERO) -> void:
+		hold: bool = true, external_accel: Vector3 = Vector3.ZERO, reel: float = 0.0) -> void:
 	time += h
 	var n := rope_dir()
 	var ang := signed_angle_deg()
 
-	# 1) Gravedad asimétrica
+	# 0) Péndulo sostenido: primera inversión del arco (o casi sin velocidad).
+	if hold and not sustain and ((_prev_ang > 3.0 and ang < 0.0) \
+			or (time > 0.5 and vel.length() < 1.0)):
+		sustain = true
+	_prev_ang = ang
+
+	# 1) Gravedad asimétrica (simétrica al colgar: la asimetría bombea energía)
 	var g_scale := tuning.gravity_scale_swing_down if vel.y < 0.0 else tuning.gravity_scale_swing_up
+	if sustain:
+		g_scale = tuning.gravity_scale_swing_down
 	var g_eff := tuning.g * g_scale
 	var acc := Vector3(0.0, -g_eff, 0.0)
 
@@ -182,7 +205,7 @@ func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
 	var drop := maxf(pos.y - bottom_y(), 0.0)
 	var v_bottom_pred := sqrt(spd * spd + 2.0 * g_eff * drop)
 	boost = 0.0
-	if hold:
+	if hold and not sustain:
 		var err := goal_bottom_speed(g_eff) - v_bottom_pred
 		boost = clampf(tuning.boost_gain * err, 0.0, tuning.boost_accel_max) \
 				* bell(ang, tuning.boost_sigma_deg)
@@ -194,6 +217,9 @@ func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
 		acc += s_t * (steer * tuning.steer_accel)
 		acc -= s_t * (vel.dot(s_t) * tuning.lane_keep * (1.0 - absf(steer)))
 	acc += project_on_plane(external_accel, n)
+	if sustain:
+		acc -= project_on_plane(vel, n) * tuning.hang_damping
+		pivot += (hang_pivot - pivot) * (1.0 - exp(-tuning.hang_pivot_rate * h))
 
 	# 4) Arrastre + techo blando
 	acc -= vel * (tuning.swing_air_drag * spd)
@@ -207,8 +233,14 @@ func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
 	# 5) Regulación de longitud (clearance) + spin-up por momento angular
 	var l_prev := length
 	var max_len := pivot.y - (ground_y + tuning.ground_clearance)
-	var l_target := clampf(minf(length, max_len), tuning.rope_min, tuning.rope_max)
+	var min_len := tuning.rope_min
+	if sustain:
+		min_len = tuning.hang_min_length
+		length -= reel * tuning.reel_climb_speed * h
+	var l_target := clampf(minf(length, max_len), min_len, tuning.rope_max)
 	length = move_toward(length, l_target, tuning.reel_speed * h)
+	if length < l_target:
+		length = l_target
 
 	# 6) Restricción unilateral con proyección que preserva la rapidez
 	var d_vec := pos - pivot

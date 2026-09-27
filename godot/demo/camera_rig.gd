@@ -13,6 +13,7 @@ var pitch := -0.22
 var camera: Camera3D
 var spring: SpringArm3D
 
+var distance_override := -1.0   ## > 0 fija la distancia (capturas de cerca)
 var _idle := 10.0
 var _shake := 0.0
 
@@ -71,8 +72,10 @@ func _process(delta: float) -> void:
 	global_position = global_position.lerp(focus, 1.0 - exp(-14.0 * delta))
 	rotation = Vector3(pitch, yaw, 0.0)
 
-	spring.spring_length = lerpf(spring.spring_length, 4.5 + clampf(spd * 0.08, 0.0, 4.0),
-			1.0 - exp(-3.0 * delta))
+	var dist := 4.5 + clampf(spd * 0.08, 0.0, 4.0)
+	if distance_override > 0.0:
+		dist = distance_override
+	spring.spring_length = lerpf(spring.spring_length, dist, 1.0 - exp(-3.0 * delta))
 	camera.fov = lerpf(camera.fov, 70.0 + clampf(spd / 45.0, 0.0, 1.0) * 20.0, 1.0 - exp(-4.0 * delta))
 
 	if target.state == TraversalController.State.SWING:

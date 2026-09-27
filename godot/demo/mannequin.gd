@@ -1,17 +1,23 @@
 class_name Mannequin
 extends Node3D
-## Personaje procedural hecho de primitivas y animado por código a partir del
-## estado físico (fase del arco, fuerza G, velocidad). En la demo sustituye al
-## rig + AnimationTree de la sección 3 aplicando las mismas reglas:
-##  - swing: pose indexada por la fase φ, brazo de agarre apuntando a la web,
-##    brazo libre que anticipa el siguiente disparo, piernas que se recogen con G;
-##  - suelta perfecta: voltereta; truco: tirabuzón; picada: cuerpo en flecha.
-## El frente del modelo es +Z; su derecha es -X. Se actualiza en
-## _physics_process para que la physics interpolation lo suavice.
+## Personaje procedural con el traje de la referencia (suit.gdshader) animado por
+## código a partir del estado físico. Sustituye al rig + AnimationTree de la
+## sección 3 aplicando las mismas reglas:
+##  - swing: pose indexada por la fase φ, brazo de agarre sobre la web, brazo libre
+##    que anticipa el siguiente disparo, piernas que se recogen con la fuerza G;
+##  - colgado: las dos manos en la telaraña, piernas colgando con inercia; al subir
+##    por la web, mano sobre mano;
+##  - pared: carrera (pies en la pared) o gateo (pegado a la fachada);
+##  - suelo: carrera/sprint, agachado al cargar el salto, aterrizaje de superhéroe,
+##    rodada;
+##  - acrobacias: volteretas y tirabuzones en sueltas, trucos, Quick Recovery, esquinas.
+## El frente del modelo es +Z y su derecha -X. Se actualiza en _physics_process
+## para que la physics interpolation lo suavice.
 
-const RED := Color(0.72, 0.07, 0.09)
-const BLUE := Color(0.1, 0.17, 0.52)
-const WHITE := Color(0.95, 0.95, 0.97)
+const SUIT := preload("res://demo/suit.gdshader")
+const REFERENCE := preload("res://demo/textures/suit_reference.webp")
+const WHITE := Color(0.96, 0.97, 1.0)
+const BLACK := Color(0.02, 0.02, 0.025)
 
 var controller: TraversalController
 var hand_socket_left: Node3D
@@ -20,28 +26,51 @@ var hand_socket_right: Node3D
 var _pelvis: Node3D
 var _spine: Node3D
 var _joints := {}
-var _mats := {}
 var _time := 0.0
-var _run_phase := 0.0
-var _flip := 1.0
+var _cycle := 0.0
 var _lean := 0.0
+var _flip_t := 1.0
+var _flip_axis := Vector3.RIGHT
+var _flip_turns := 1.0
+var _flip_time := 0.5
 
 
 func _ready() -> void:
 	_build()
 	controller.web_released.connect(_on_web_released)
+	controller.trick_started.connect(_on_trick)
+	controller.landed.connect(_on_landed)
+	controller.quick_recovered.connect(func() -> void: _start_flip(Vector3.RIGHT, 1.0, 0.55))
+	controller.corner_turned.connect(func(launched: bool) -> void:
+		if launched:
+			_start_flip(Vector3.RIGHT, 1.0, 0.6))
+	controller.point_launched.connect(func(perfect: bool) -> void:
+		if perfect:
+			_start_flip(Vector3.RIGHT, 1.0, 0.6))
 
 
 # ---------------------------------------------------------------------------
-# Construcción
+# Construcción del cuerpo
 # ---------------------------------------------------------------------------
-func _mat(c: Color) -> StandardMaterial3D:
-	if not _mats.has(c):
-		var m := StandardMaterial3D.new()
-		m.albedo_color = c
-		m.roughness = 0.45
-		_mats[c] = m
-	return _mats[c]
+func _suit(mode: int, params := {}) -> ShaderMaterial:
+	var m := ShaderMaterial.new()
+	m.shader = SUIT
+	m.set_shader_parameter("mode", mode)
+	m.set_shader_parameter("reference", REFERENCE)
+	for key: String in params:
+		m.set_shader_parameter(key, params[key])
+	return m
+
+
+func _limb_mat(radius: float, length: float) -> ShaderMaterial:
+	return _suit(0, {"uv_meters": Vector2(TAU * radius, length)})
+
+
+func _flat(color: Color, rough := 0.2) -> StandardMaterial3D:
+	var m := StandardMaterial3D.new()
+	m.albedo_color = color
+	m.roughness = rough
+	return m
 
 
 func _pivot(parent: Node3D, pos: Vector3, key := "") -> Node3D:
@@ -53,20 +82,24 @@ func _pivot(parent: Node3D, pos: Vector3, key := "") -> Node3D:
 	return n
 
 
-func _part(parent: Node3D, mesh: Mesh, pos: Vector3, color: Color) -> void:
+func _part(parent: Node3D, mesh: Mesh, pos: Vector3, mat: Material, scl := Vector3.ONE,
+		rot_deg := Vector3.ZERO) -> MeshInstance3D:
 	var mi := MeshInstance3D.new()
 	mi.mesh = mesh
 	mi.position = pos
-	mi.material_override = _mat(color)
+	mi.scale = scl
+	mi.rotation_degrees = rot_deg
+	mi.material_override = mat
 	parent.add_child(mi)
+	return mi
 
 
 func _capsule(r: float, h: float) -> CapsuleMesh:
 	var m := CapsuleMesh.new()
 	m.radius = r
 	m.height = h
-	m.radial_segments = 12
-	m.rings = 4
+	m.radial_segments = 16
+	m.rings = 6
 	return m
 
 
@@ -74,14 +107,18 @@ func _sphere(r: float, h := -1.0) -> SphereMesh:
 	var m := SphereMesh.new()
 	m.radius = r
 	m.height = r * 2.0 if h < 0.0 else h
-	m.radial_segments = 16
-	m.rings = 8
+	m.radial_segments = 24
+	m.rings = 12
 	return m
 
 
-func _box(size: Vector3) -> BoxMesh:
-	var m := BoxMesh.new()
-	m.size = size
+func _cylinder(r_top: float, r_bottom: float, h: float) -> CylinderMesh:
+	var m := CylinderMesh.new()
+	m.top_radius = r_top
+	m.bottom_radius = r_bottom
+	m.height = h
+	m.radial_segments = 16
+	m.rings = 2
 	return m
 
 
@@ -91,37 +128,51 @@ static func _s(side: int) -> String:
 
 func _build() -> void:
 	_pelvis = _pivot(self, Vector3.ZERO, "pelvis")
-	_part(_pelvis, _box(Vector3(0.3, 0.16, 0.19)), Vector3.ZERO, BLUE)
-	_spine = _pivot(_pelvis, Vector3(0.0, 0.07, 0.0), "spine")
-	_part(_spine, _capsule(0.16, 0.52), Vector3(0.0, 0.26, 0.0), RED)
-	_part(_spine, _box(Vector3(0.36, 0.12, 0.2)), Vector3(0.0, 0.44, 0.0), RED)
-	var head := _pivot(_spine, Vector3(0.0, 0.56, 0.0), "head")
-	_part(head, _sphere(0.115), Vector3(0.0, 0.12, 0.0), RED)
-	for ex in [-0.045, 0.045]:
-		_part(head, _sphere(0.035, 0.05), Vector3(ex, 0.14, 0.095), WHITE)
+	_part(_pelvis, _sphere(1.0), Vector3.ZERO,
+			_suit(1, {"pattern_scale": Vector3(0.17, 0.12, 0.12), "radial_center": Vector2(0.0, -0.1),
+				"spokes": 10.0}), Vector3(0.17, 0.12, 0.12))
+	_spine = _pivot(_pelvis, Vector3(0.0, 0.06, 0.0), "spine")
+	_part(_spine, _cylinder(0.15, 0.14, 0.26), Vector3(0.0, 0.12, 0.0), _limb_mat(0.15, 0.26))
+	# Pecho: telaraña radial centrada en el esternón (y en la espalda).
+	_part(_spine, _sphere(1.0), Vector3(0.0, 0.38, 0.0),
+			_suit(1, {"pattern_scale": Vector3(0.21, 0.2, 0.135), "radial_center": Vector2(0.0, 0.02)}),
+			Vector3(0.21, 0.2, 0.135))
+	_part(_spine, _cylinder(0.05, 0.055, 0.1), Vector3(0.0, 0.58, 0.0), _limb_mat(0.05, 0.1))
+	var head := _pivot(_spine, Vector3(0.0, 0.6, 0.0), "head")
+	_part(head, _sphere(0.115, 0.26), Vector3(0.0, 0.12, 0.0), _suit(2))
+	for side in [1, -1]:
+		# Lentes blancas con marco negro, inclinadas hacia fuera como en la máscara.
+		var ex := -float(side) * 0.047
+		var tilt := Vector3(0.0, -float(side) * 18.0, -float(side) * 22.0)
+		_part(head, _sphere(1.0), Vector3(ex, 0.14, 0.094), _flat(BLACK, 0.3),
+				Vector3(0.05, 0.036, 0.02), tilt)
+		_part(head, _sphere(1.0), Vector3(ex * 1.02, 0.141, 0.1), _flat(WHITE, 0.1),
+				Vector3(0.042, 0.029, 0.018), tilt)
 
 	for side in [1, -1]:                  # +1 derecha (-X), -1 izquierda (+X)
 		var sx := -float(side)
 		var s := _s(side)
-		var sh := _pivot(_spine, Vector3(sx * 0.22, 0.44, 0.0), "sh_" + s)
-		_part(sh, _capsule(0.055, 0.32), Vector3(0.0, -0.15, 0.0), RED)
+		var sh := _pivot(_spine, Vector3(sx * 0.23, 0.47, 0.0), "sh_" + s)
+		_part(sh, _sphere(0.072), Vector3.ZERO, _limb_mat(0.072, 0.14))
+		_part(sh, _capsule(0.055, 0.33), Vector3(0.0, -0.15, 0.0), _limb_mat(0.055, 0.33))
 		var el := _pivot(sh, Vector3(0.0, -0.3, 0.0), "el_" + s)
-		_part(el, _capsule(0.05, 0.3), Vector3(0.0, -0.14, 0.0), RED)
+		_part(el, _capsule(0.047, 0.3), Vector3(0.0, -0.14, 0.0), _limb_mat(0.047, 0.3))
 		var hand := _pivot(el, Vector3(0.0, -0.3, 0.0))
-		_part(hand, _sphere(0.055), Vector3.ZERO, RED)
+		_part(hand, _sphere(0.05, 0.12), Vector3(0.0, -0.02, 0.0), _limb_mat(0.05, 0.12))
 		if side > 0:
 			hand_socket_right = hand
 		else:
 			hand_socket_left = hand
-		var hip := _pivot(_pelvis, Vector3(sx * 0.1, -0.05, 0.0), "hip_" + s)
-		_part(hip, _capsule(0.075, 0.46), Vector3(0.0, -0.215, 0.0), BLUE)
+		var hip := _pivot(_pelvis, Vector3(sx * 0.095, -0.05, 0.0), "hip_" + s)
+		_part(hip, _capsule(0.08, 0.47), Vector3(0.0, -0.215, 0.0), _limb_mat(0.08, 0.47))
 		var knee := _pivot(hip, Vector3(0.0, -0.43, 0.0), "kn_" + s)
-		_part(knee, _capsule(0.065, 0.44), Vector3(0.0, -0.21, 0.0), BLUE)
-		_part(knee, _box(Vector3(0.1, 0.07, 0.24)), Vector3(0.0, -0.44, 0.05), RED)
+		_part(knee, _capsule(0.063, 0.45), Vector3(0.0, -0.21, 0.0), _limb_mat(0.063, 0.45))
+		_part(knee, _capsule(0.052, 0.25), Vector3(0.0, -0.44, 0.06), _limb_mat(0.052, 0.25),
+				Vector3.ONE, Vector3(90.0, 0.0, 0.0))
 
 
 # ---------------------------------------------------------------------------
-# Poses
+# Utilidades de pose
 # ---------------------------------------------------------------------------
 static func _q(x_deg: float, z_deg := 0.0) -> Quaternion:
 	return Quaternion.from_euler(Vector3(deg_to_rad(x_deg), 0.0, deg_to_rad(z_deg)))
@@ -150,6 +201,20 @@ func _aim_arm(side: int, world_target: Vector3) -> Quaternion:
 	return Quaternion(Basis(x, y, x.cross(y)).orthonormalized())
 
 
+func _local_velocity() -> Vector3:
+	return global_transform.basis.orthonormalized().inverse() * controller.velocity
+
+
+func _start_flip(axis: Vector3, turns: float, duration: float) -> void:
+	_flip_axis = axis
+	_flip_turns = turns
+	_flip_time = duration
+	_flip_t = 0.0
+
+
+# ---------------------------------------------------------------------------
+# Poses por estado
+# ---------------------------------------------------------------------------
 func _pose_swing(pose: Dictionary) -> void:
 	var c := controller
 	var p := c.pendulum
@@ -158,31 +223,63 @@ func _pose_swing(pose: Dictionary) -> void:
 	var g := clampf((p.g_force - 1.0) / 5.0, 0.0, 1.0)
 	var aggr := clampf((c.velocity.length() - 22.0) / 6.0, 0.0, 1.0)
 	var grip := c.hand if c.hand != 0 else 1
-	# Brazo de agarre: recto sobre la web cuando hay tensión (IK de la sección 3.3).
 	pose["sh_" + _s(grip)] = _aim_arm(grip, p.anchor)
 	pose["el_" + _s(grip)] = _q(-(1.0 - clampf(p.g_force / 1.5, 0.0, 1.0)) * 35.0)
-	# Brazo libre: atrás en la caída, buscando el siguiente anclaje en la subida.
 	var reach := smoothstep(0.1, 0.7, ph)
-	_arm(pose, -grip, lerpf(-20.0, 150.0, reach), lerpf(55.0, 25.0, reach), lerpf(35.0, 10.0, reach))
+	_arm(pose, -grip, lerpf(-25.0, 150.0, reach), lerpf(60.0, 25.0, reach), lerpf(40.0, 10.0, reach))
 	# Piernas: de atrás hacia delante con la fase; se recogen con la fuerza G.
-	var thigh := lerpf(-20.0, 70.0, t01) + g * 35.0
-	var knee := lerpf(40.0, 12.0, clampf(ph, 0.0, 1.0)) + g * 70.0
-	var split := aggr * 30.0
+	var thigh := lerpf(-25.0, 75.0, t01) + g * 35.0
+	var knee := lerpf(45.0, 10.0, clampf(ph, 0.0, 1.0)) + g * 70.0
+	var split := aggr * 32.0
 	_leg(pose, 1, thigh + split, 6.0, knee)
-	_leg(pose, -1, thigh - split, 6.0, knee + aggr * 25.0)
-	pose["spine"] = _q(lerpf(-14.0, 14.0, t01) - g * 8.0)
+	_leg(pose, -1, thigh - split, 6.0, knee + aggr * 30.0)
+	pose["spine"] = _q(lerpf(-16.0, 14.0, t01) - g * 8.0)
 	pose["head"] = _q(-18.0)
+
+
+func _pose_hang(pose: Dictionary, delta: float) -> void:
+	var c := controller
+	var p := c.pendulum
+	var grip := c.hand if c.hand != 0 else 1
+	var web_dir := (p.anchor - global_position).normalized()
+	var climbing := absf(c.move_input.y) > 0.3
+	if climbing:
+		_cycle += delta * 7.0
+	# Las dos manos en la telaraña; al subir o bajar, mano sobre mano.
+	var lift := sin(_cycle) * 0.22 if climbing else 0.0
+	var top := global_position + web_dir * 1.3
+	pose["sh_" + _s(grip)] = _aim_arm(grip, top + web_dir * lift)
+	pose["el_" + _s(grip)] = _q(-10.0 - maxf(-lift, 0.0) * 150.0)
+	pose["sh_" + _s(-grip)] = _aim_arm(-grip, top - web_dir * (0.3 + lift))
+	pose["el_" + _s(-grip)] = _q(-35.0 - maxf(lift, 0.0) * 150.0)
+	# Piernas colgando con inercia: se quedan atrás respecto a la velocidad.
+	var lv := _local_velocity()
+	var swing_lag := clampf(-lv.z * 3.0, -35.0, 35.0)
+	var side_lag := clampf(lv.x * 3.0, -20.0, 20.0)
+	var kick := sin(_time * 1.7) * 4.0
+	var climb_r := sin(_cycle) * 25.0 if climbing else 0.0
+	var climb_l := cos(_cycle) * 25.0 if climbing else 0.0
+	_leg(pose, 1, 8.0 + swing_lag + kick, 5.0 + side_lag, 22.0 + climb_r)
+	_leg(pose, -1, 14.0 + swing_lag - kick, 5.0 - side_lag, 35.0 + climb_l)
+	pose["spine"] = _q(-6.0 + swing_lag * 0.2)
+	pose["head"] = _q(-5.0)
 
 
 func _pose_fall(pose: Dictionary) -> void:
 	var v := controller.velocity
-	if controller.trick_timer > 0.0:
+	if controller.trick_timer > 0.0 or _flip_t < 1.0:
 		_arm(pose, 1, 60.0, 20.0, 95.0)
 		_arm(pose, -1, 60.0, 20.0, 95.0)
 		_leg(pose, 1, 100.0, 10.0, 125.0)
 		_leg(pose, -1, 100.0, 10.0, 125.0)
 		pose["spine"] = _q(30.0)
 		pose["head"] = _q(10.0)
+		if controller.trick_timer > 0.0 and controller.trick_index in [
+				TraversalController.Trick.ROLL_LEFT, TraversalController.Trick.ROLL_RIGHT]:
+			_arm(pose, 1, 10.0, 95.0, 5.0)      # tirabuzón: brazos abiertos en cruz
+			_arm(pose, -1, 10.0, 95.0, 5.0)
+			_leg(pose, 1, 0.0, 12.0, 5.0)
+			_leg(pose, -1, 0.0, 12.0, 5.0)
 		return
 	var rising := clampf(v.y / 15.0, -1.0, 1.0)
 	var flutter := sin(_time * 9.0) * clampf(-v.y / 40.0, 0.0, 1.0) * 10.0
@@ -213,25 +310,55 @@ func _pose_zip(pose: Dictionary) -> void:
 	pose["head"] = _q(-10.0)
 
 
+func _pose_crouch(pose: Dictionary, amount: float) -> void:
+	_arm(pose, 1, lerpf(5.0, -35.0, amount), 15.0, lerpf(12.0, 40.0, amount))
+	_arm(pose, -1, lerpf(5.0, -35.0, amount), 15.0, lerpf(12.0, 40.0, amount))
+	_leg(pose, 1, 100.0 * amount, 12.0, 125.0 * amount)
+	_leg(pose, -1, 100.0 * amount, 12.0, 125.0 * amount)
+	pose["spine"] = _q(40.0 * amount)
+	pose["head"] = _q(-35.0 * amount)
+
+
+func _pose_hero_landing(pose: Dictionary) -> void:
+	# Aterrizaje de superhéroe: rodilla derecha al suelo, puño derecho apoyado.
+	_arm(pose, 1, 35.0, 25.0, 15.0)
+	_arm(pose, -1, -40.0, 55.0, 30.0)
+	_leg(pose, 1, 25.0, 12.0, 120.0)
+	_leg(pose, -1, 95.0, 10.0, 105.0)
+	pose["spine"] = _q(38.0)
+	pose["head"] = _q(-40.0)
+
+
+func _pose_run(pose: Dictionary, delta: float, speed: float, sprint: bool) -> void:
+	_cycle += delta * clampf(speed, 2.0, 25.0) * 0.9
+	var s := sin(_cycle)
+	var c := cos(_cycle)
+	var stride := 60.0 if sprint else 50.0
+	_leg(pose, 1, s * stride, 4.0, 20.0 + maxf(0.0, -c) * 85.0)
+	_leg(pose, -1, -s * stride, 4.0, 20.0 + maxf(0.0, c) * 85.0)
+	_arm(pose, 1, -s * 45.0, 10.0, 75.0)
+	_arm(pose, -1, s * 45.0, 10.0, 75.0)
+	pose["spine"] = _q(24.0 if sprint else 12.0)
+	pose["head"] = _q(-14.0 if sprint else -8.0)
+
+
+func _pose_crawl(pose: Dictionary, delta: float) -> void:
+	# Pegado a la fachada: extremidades abiertas; al moverse, diagonales alternas.
+	var speed := controller.velocity.length()
+	_cycle += delta * speed * 2.2
+	var s := sin(_cycle) * clampf(speed / 3.0, 0.0, 1.0)
+	_arm(pose, 1, 70.0 + s * 25.0, 55.0, 80.0 - s * 30.0)
+	_arm(pose, -1, 70.0 - s * 25.0, 55.0, 80.0 + s * 30.0)
+	_leg(pose, 1, 45.0 - s * 25.0, 38.0, 95.0 + s * 20.0)
+	_leg(pose, -1, 45.0 + s * 25.0, 38.0, 95.0 - s * 20.0)
+	pose["spine"] = _q(12.0)
+	pose["head"] = _q(-30.0)
+
+
 func _pose_perch(pose: Dictionary) -> void:
+	_pose_crouch(pose, 1.0)
 	_arm(pose, 1, 35.0, 15.0, 70.0)
 	_arm(pose, -1, 35.0, 15.0, 70.0)
-	_leg(pose, 1, 100.0, 14.0, 125.0)
-	_leg(pose, -1, 100.0, 14.0, 125.0)
-	pose["spine"] = _q(40.0)
-	pose["head"] = _q(-35.0)
-
-
-func _pose_run(pose: Dictionary, delta: float, speed: float) -> void:
-	_run_phase += delta * clampf(speed, 2.0, 25.0) * 0.9
-	var s := sin(_run_phase)
-	var c := cos(_run_phase)
-	_leg(pose, 1, s * 50.0, 4.0, 20.0 + maxf(0.0, -c) * 80.0)
-	_leg(pose, -1, -s * 50.0, 4.0, 20.0 + maxf(0.0, c) * 80.0)
-	_arm(pose, 1, -s * 45.0, 10.0, 70.0)
-	_arm(pose, -1, s * 45.0, 10.0, 70.0)
-	pose["spine"] = _q(12.0)
-	pose["head"] = _q(-8.0)
 
 
 func _pose_idle(pose: Dictionary) -> void:
@@ -244,11 +371,41 @@ func _pose_idle(pose: Dictionary) -> void:
 	pose["head"] = _q(0.0)
 
 
+# ---------------------------------------------------------------------------
+# Eventos -> acrobacias
+# ---------------------------------------------------------------------------
 func _on_web_released(_hand: int, perfect: bool) -> void:
-	if perfect and not controller.last_release_chained:
-		_flip = 0.0                         # voltereta de suelta perfecta
+	if controller.state != TraversalController.State.FALL:
+		return
+	var spd := controller.velocity.length()
+	if perfect:
+		_start_flip(Vector3(0.3, 1.0, 0.0).normalized(), 1.0, 0.6)   # tirabuzón con voltereta
+	elif spd > 20.0:
+		_start_flip(Vector3.RIGHT, 1.0, 0.55)
 
 
+func _on_trick() -> void:
+	match controller.trick_index:
+		TraversalController.Trick.FRONT_FLIP:
+			_start_flip(Vector3.RIGHT, 1.0, TraversalController.TRICK_TIME)
+		TraversalController.Trick.BACK_FLIP:
+			_start_flip(Vector3.LEFT, 1.0, TraversalController.TRICK_TIME)
+		TraversalController.Trick.ROLL_LEFT:
+			_start_flip(Vector3.FORWARD, 1.0, TraversalController.TRICK_TIME)
+		TraversalController.Trick.ROLL_RIGHT:
+			_start_flip(Vector3.BACK, 1.0, TraversalController.TRICK_TIME)
+		_:
+			_start_flip(Vector3.UP, 2.0, TraversalController.TRICK_TIME)
+
+
+func _on_landed(_impact: float) -> void:
+	if controller.land_kind == "roll":
+		_start_flip(Vector3.RIGHT, 1.0, controller.tuning.quick_recovery_window)
+
+
+# ---------------------------------------------------------------------------
+# Bucle
+# ---------------------------------------------------------------------------
 func _physics_process(delta: float) -> void:
 	if controller == null:
 		return
@@ -256,9 +413,13 @@ func _physics_process(delta: float) -> void:
 	var c := controller
 	var pose := {}
 	var rate := 16.0
+	var crouch := 0.0
 	match c.state:
 		TraversalController.State.SWING:
-			_pose_swing(pose)
+			if c.pendulum.sustain and c.pendulum.speed < 6.0:
+				_pose_hang(pose, delta)
+			else:
+				_pose_swing(pose)
 			rate = 24.0
 		TraversalController.State.DIVE:
 			_pose_dive(pose)
@@ -266,11 +427,25 @@ func _physics_process(delta: float) -> void:
 			_pose_zip(pose)
 		TraversalController.State.PERCH:
 			_pose_perch(pose)
+			crouch = 0.32
 		TraversalController.State.WALL_RUN:
-			_pose_run(pose, delta, c.velocity.length())
+			if c.wall_crawl:
+				_pose_crawl(pose, delta)
+			else:
+				_pose_run(pose, delta, c.velocity.length(), true)
 		TraversalController.State.GROUNDED:
-			if RegulatedPendulum.flat(c.velocity).length() > 1.0:
-				_pose_run(pose, delta, RegulatedPendulum.flat(c.velocity).length())
+			var hspeed := RegulatedPendulum.flat(c.velocity).length()
+			if c.land_timer > 0.0 and c.land_kind == "hero":
+				_pose_hero_landing(pose)
+				crouch = 0.45
+				rate = 30.0
+			elif c.land_timer > 0.0 and c.land_kind == "roll":
+				_pose_crouch(pose, 1.0)
+			elif c.jump_charge > 0.0:
+				_pose_crouch(pose, c.jump_charge)
+				crouch = 0.35 * c.jump_charge
+			elif hspeed > 1.0:
+				_pose_run(pose, delta, hspeed, c.sprinting)
 			else:
 				_pose_idle(pose)
 		_:
@@ -281,15 +456,12 @@ func _physics_process(delta: float) -> void:
 		var node: Node3D = _joints[key]
 		node.quaternion = node.quaternion.slerp(pose[key], k)
 
-	# Pelvis: inclinación al girar, voltereta de suelta perfecta, tirabuzón de truco.
+	# Pelvis: inclinación al girar + acrobacias (voltereta / tirabuzón / giro).
 	var steer := c.move_input.x if c.state == TraversalController.State.SWING else 0.0
 	_lean = lerpf(_lean, -steer * deg_to_rad(22.0), k)
-	_flip = minf(_flip + delta / 0.5, 1.0)
-	var flip_angle := TAU * smoothstep(0.0, 1.0, _flip) if _flip < 1.0 else 0.0
-	var spin := 0.0
-	if c.trick_timer > 0.0:
-		spin = TAU * 2.0 * smoothstep(0.0, 1.0, 1.0 - c.trick_timer / 0.6)
-	_pelvis.quaternion = Quaternion(Vector3.UP, spin) * Quaternion(Vector3.RIGHT, flip_angle) \
-			* Quaternion(Vector3.BACK, _lean)
-	var crouch := -0.32 if c.state == TraversalController.State.PERCH else 0.0
-	_pelvis.position.y = lerpf(_pelvis.position.y, crouch, k)
+	var acro := Quaternion.IDENTITY
+	if _flip_t < 1.0:
+		_flip_t = minf(_flip_t + delta / _flip_time, 1.0)
+		acro = Quaternion(_flip_axis, TAU * _flip_turns * smoothstep(0.0, 1.0, _flip_t))
+	_pelvis.quaternion = acro * Quaternion(Vector3.BACK, _lean)
+	_pelvis.position.y = lerpf(_pelvis.position.y, -crouch, k)

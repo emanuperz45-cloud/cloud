@@ -265,30 +265,51 @@ $u_h$ es la banda de altitud (D). **Riesgo/recompensa medida** (simulador, 60 s)
 
 ## 2. Máquina de estados (FSM) y disparadores de animación
 
+### 2.0 Moveset del original y cómo se implementa
+
+Referencia: el moveset de traversal de *Marvel's Spider-Man* (2018) según guías públicas del juego ([Red Bull](https://www.redbull.com/ca-en/marvel-spiderman-tips-web), [Gamepur](https://www.gamepur.com/news/spider-man-ps4-web-swinging-button-layout), [Twinfinite](https://twinfinite.net/guides/spider-man-ps4-swing-around-building-corners-how/), [PSU](https://www.psu.com/news/spider-man-ps4-skill-tree-what-skills-does-spidey-have/), [Newsweek](https://www.newsweek.com/spiderman-ps4-beginners-guide-tips-tricks-1110064)). Mapeo de mando PS4 → demo (teclado / mando Xbox):
+
+| En el original | Comportamiento | En la demo | Diferencia deliberada |
+|---|---|---|---|
+| **R2** en el aire | Balanceo; mantenido tras un salto dispara la siguiente web | Clic izq / RT | **Mantener = misma telaraña** (petición de diseño): el péndulo no se suelta solo y acaba colgado (§2.1) |
+| **X** en pleno swing | En el punto más bajo lanza hacia delante; al final del arco, hacia arriba | Espacio / A | Mezcla continua según $\theta_s$ (§2.1) |
+| **X** en el aire | *Web Zip*: impulso hacia delante que corrige el rumbo | Espacio / A o E / X | — |
+| *Quick Zip* (habilidad) | Segundo zip sin perder altura | Zip dentro de 1 s del anterior | — |
+| **L2+R2** | *Zip to Point* a un punto de posado | Q, clic der / LT | — |
+| *Point Launch Boost* | X justo al tocar el punto = lanzamiento mucho mayor | Espacio en 0,22 s | — |
+| **R2** en suelo/pared | Sprint/parkour; en una pared, correr hacia arriba | Clic mantenido | — |
+| Pared sin R2 | Trepar | Soltar el clic en la pared | — |
+| **X** en la pared | Web hacia arriba de la fachada y tirón | Espacio corriendo en vertical | En horizontal o trepando, X es salto de pared |
+| **○** cerca de una esquina | Web a la esquina y la rodea sin perder velocidad | Mayús / B corriendo por la pared | Sin ○: *corner launch* (sale despedido) |
+| *Charge Jump* (habilidad) | Cargar en el suelo y soltar para un salto enorme | Mantener Espacio / A | — |
+| *Quick Recovery* (habilidad) | X durante la rodada al aterrizar relanza al aire | Espacio durante la rodada | — |
+| **L3** | Picada para ganar velocidad | Mayús / B mantenido | Mantenido en vez de toque |
+| **○+△ + stick** | *Air Tricks* según la dirección | F / Y + dirección | 5 trucos: voltereta adelante/atrás, tirabuzón izq./der., giro |
+
 ```mermaid
 stateDiagram-v2
     [*] --> Fall
-    Grounded --> Fall: salto / pierde suelo
-    Fall --> Swing: gatillo pulsado o mantenido 0,15 s + anclaje válido
-    Dive --> Swing: gatillo (catch de picada)
-    Fall --> Dive: botón picada mientras cae
-    Dive --> Fall: suelta botón
-    Fall --> WebZip: botón zip (cooldown 0,35 s)
+    Grounded --> Fall: salto o Charge Jump / pierde suelo / Quick Recovery
+    Grounded --> WallRun: sprint con clic contra una fachada
+    Fall --> Swing: clic (pulsado o mantenido 0,15 s) + anclaje válido
+    Dive --> Swing: clic (catch de picada)
+    Fall --> Dive: picada mientras cae
+    Dive --> Fall: suelta picada
+    Fall --> WebZip: salto en el aire (Web Zip / Quick Zip)
     WebZip --> Fall: 0,3 s
-    Fall --> PointZip: botón point zip y perch visible
+    Fall --> PointZip: point zip y perch visible
     PointZip --> Perch: llegada
-    Perch --> Fall: salto (Point Launch) / gatillo
-    Swing --> Fall: suelta gatillo, salto, encadenado a 35 grados o auto-release
-    Swing --> WallRun: impacto con pared
-    Fall --> WallRun: impacto con pared
-    WebZip --> WallRun: impacto con pared
-    WallRun --> Fall: salto / pierde pared / vault / tiempo
-    WallRun --> Swing: gatillo
-    Fall --> Grounded: is_on_floor (Land_*)
-    Swing --> Grounded: is_on_floor
+    Perch --> Fall: salto (Point Launch) / clic
+    Swing --> Fall: soltar clic o salto
+    Swing --> WallRun: choque rápido en el primer arco
+    Fall --> WallRun: contacto con pared (con clic corre, sin clic trepa)
+    WebZip --> WallRun: contacto con pared
+    WallRun --> Fall: salto de pared / vault / esquina / picada
+    Fall --> Grounded: aterrizaje (suave, rodada o superhéroe)
+    Swing --> Grounded: toca el suelo
 ```
 
-**Prioridad de transiciones** (se evalúan en este orden dentro de cada estado): colisión→WallRun > suelo→Grounded > input explícito (salto, zip, point zip) > gatillo de swing > auto-release/temporizadores. El salto usa un **buffer de 0,15 s** para que una pulsación ligeramente temprana cuente (esencial para Point Launch).
+**Prioridad de transiciones** (en este orden dentro de cada estado): colisión→pared > suelo→Grounded > input explícito (salto, zip, point zip) > clic de swing > temporizadores. El salto usa un **buffer de 0,15 s** para que una pulsación ligeramente temprana cuente (esencial para Point Launch). Tras dejar una pared hay 0,25 s de enfriamiento antes de volver a pegarse (evita bucles de entrar/salir en cornisas y esquinas).
 
 **Parámetros que publica la capa física** (los consume `TraversalAnimator`):
 
@@ -303,14 +324,38 @@ stateDiagram-v2
 | `Steer` | −1..1 | input |
 | `Aggressiveness` | 0..1 | animador (histéresis 22/26 m/s) |
 | `IsFalling` | bool | $v_y<0$ en Fall/Dive |
-| `WallNormal`, `WallVertical` | vec3, bool | wall run |
-| Señales | `web_fired(hand, A)`, `web_released(hand, perfect)`, `landed(v)`, `wall_run_started(vert)`, `point_launched(perfect)`, `trick_started()` | FSM |
+| `WallNormal`, `WallVertical`, `WallCrawl` | vec3, bool, bool | pared (correr / trepar) |
+| `Sustain` | bool | péndulo sostenido (colgado) |
+| `JumpCharge`, `LandKind`, `TrickIndex` | 0..1, enum, enum | suelo / trucos |
+| Señales | `web_fired(hand, A)`, `web_released(hand, perfect)`, `landed(v)`, `wall_run_started(vert)`, `point_launched(perfect)`, `trick_started()`, `jumped(charge)`, `quick_recovered()`, `corner_turned(launched)` | FSM |
 
-### 2.1 Web Swing (arco del péndulo)
+### 2.1 Web Swing (arco del péndulo) y colgado
 
 **Física:** `RegulatedPendulum.step` a 240 Hz; el cuerpo se mueve con `move_and_slide` hacia la posición propuesta; predicción F cada 0,1 s.
 
-**Salidas del estado:** soltar gatillo (suelta manual, evalúa ventana perfecta) · botón de salto (*swing jump*: suelta + $6\cdot(1+0{,}45\,[\text{perfecta}])$ m/s hacia arriba) · gatillo mantenido y $\theta_s\ge35^\circ$ (**encadenado automático**: suelta *sin* bonus de suelta perfecta y re-dispara en cuanto lleva 0,15 s en Fall; en simulación da ~30 m/s de crucero a altitud estable, frente a 17–18 m/s y deriva hacia arriba con 55°) · $\theta_s\ge95^\circ$ o $v<3$ m/s en subida (auto-release) · colisión (wall run) · suelo.
+**Mantener el clic = misma telaraña.** No hay suelta automática. El primer arco se comporta como en §1 (inyección, gravedad asimétrica, *catch*). En la **primera inversión** del arco ($\theta_s$ pasa de $>3^\circ$ a $<0$) el péndulo entra en **modo sostenido**:
+
+$$
+g_{eff}=2{,}0\,g\ \text{(simétrica)},\qquad
+\mathbf a \mathrel{-}= c\,\Pi_{\hat n}(\mathbf v),\ c=0{,}75\ \mathrm{s^{-1}},\qquad
+\mathbf P \leftarrow \mathbf P+(\mathbf P_{hang}-\mathbf P)\,(1-e^{-0{,}8\,h}),\qquad
+\dot L = -u\,v_{reel}
+$$
+
+- Sin inyección: la gravedad asimétrica bombearía energía en cada oscilación y nunca se pararía; con gravedad simétrica y amortiguación la amplitud cae como $e^{-ct/2}$ (dos oscilaciones visibles y quieto a los ~7–15 s según la longitud de cuerda).
+- $\mathbf P_{hang}=\mathbf A+\widehat{(\mathbf P-\mathbf A)}_{xz}\cdot\min(1\,\text{m},\lVert(\mathbf P-\mathbf A)_{xz}\rVert)$: el pivote regulado vuelve al anclaje real, separado 1 m de la fachada hacia el lado de la calle, para que colgado quedes **justo bajo la telaraña** y no torcido.
+- $u\in[-1,1]$ = W/S: subir/bajar por la telaraña a 5 m/s ($L\ge4$ m; nunca por debajo del *clearance*). Subir conserva el momento angular (§1.2).
+- Chocar contra una fachada en modo sostenido **no suelta la web**: el cuerpo roza y sigue colgado. Solo el primer arco, a más de 4,5 m/s, se convierte en wall run (como en el original).
+
+Tests: `HoldToHangTests` (Python) comprueban que no hay suelta, que queda quieto bajo el anclaje y el reel. En Godot, el escenario `--scenario=hang` mantiene el clic: una sola web, quieto a los 6,9 s, y W sube de 12,6 m a 5,1 m de cuerda.
+
+**Salidas del estado:** soltar el clic (suelta manual, evalúa ventana perfecta) · salto (*swing jump*, abajo) · tocar el suelo · choque rápido en el primer arco (wall run).
+
+**Swing jump según la fase** (como en el original): con $t=\operatorname{smoothstep}(5^\circ,45^\circ,\theta_s)$,
+$$
+\Delta\mathbf v = m\left[\hat{\mathbf d}\,\operatorname{lerp}(9,\,2,\,t) + \hat{\mathbf y}\,\operatorname{lerp}(3,\,9,\,t)\right],\qquad m=1{,}45\ \text{si cae en la ventana perfecta}
+$$
+En el fondo del arco sale disparado hacia delante; al final del arco, hacia arriba. Colgado y casi quieto, el salto es un impulso vertical de 12 m/s ("saltar desde la telaraña").
 
 | Sub-fase | Condición | Física dominante | Animación (lógica exacta) |
 |---|---|---|---|
@@ -318,26 +363,27 @@ stateDiagram-v2
 | **Caída asistida** | $\varphi<-0{,}2$ | Gravedad ×2,0, cuerda tensándose | Blendspace `Swing_*` en $\varphi\in[-1,-0{,}2]$ (Catch→Drop). IK de mano sube con $T$. Piernas recogiéndose por overlap. |
 | **Arco bajo (tensión máx.)** | $\lvert\varphi\rvert\le0{,}2$ | Pico de $T$ (4–7 g), inyección gaussiana | `Swing_*` en Bottom. Aditiva `GLoad` = $\operatorname{clamp}((G-1)/5)$. IK de mano = 1 (brazo recto sobre la web). Mano libre agarra la web si `Aggressiveness`>0. |
 | **Arco ascendente** | $\varphi>0{,}2$ | Gravedad ×1,7 (flotación) | `Swing_*` hacia Apex. La cabeza **ya mira al próximo anclaje** (anticipación). `GLoad` cae. Ventana perfecta en $\theta_s\in[31^\circ,49^\circ]$. |
-| **Suelta** | `web_released` | Boost D | Encadenado (gatillo mantenido) → `Release_Reach` 0,25 s; si no, `Release_Flip` si perfecta o $v>26$ m/s, o `Release_Neutral` (0,45 s forzados); luego `Fall`. `WebLine` en `RELEASED`. |
+| **Sostenido / colgado** | tras la 1.ª inversión con clic mantenido | Amortiguado, gravedad simétrica, pivote → anclaje | Con $v>6$ m/s sigue el blendspace de swing; por debajo, pose `Hang`: las dos manos en la web, piernas colgando con retraso respecto a la velocidad (inercia); al subir o bajar, mano sobre mano. HUD: *COLGADO*. |
+| **Suelta** | `web_released` | Boost D + swing jump | `Release_Flip` (voltereta) si $v>20$ m/s; tirabuzón con voltereta si es perfecta; si no `Release_Neutral`; luego `Fall`. `WebLine` en `RELEASED`. |
 
 El nodo es `Swing_R` o `Swing_L` según `Hand`; ambos reciben `blend_position = (φ, Aggressiveness)`.
 
-### 2.2 Web Zip / Point Launch
+### 2.2 Web Zip, Quick Zip y Point Launch
 
-**Web Zip** (impulso horizontal en el aire):
+**Web Zip** (salto en el aire, o su botón propio):
 $$
-\mathbf v \leftarrow \hat{\mathbf d}_{cam}\max(\mathbf v\cdot\hat{\mathbf d}_{cam},\,26\,\beta) + 0{,}3\,\Pi_{\hat d}(\mathbf v_{xz}) + \hat{\mathbf y}\max(0{,}2\,v_y,\,5)
+\mathbf v \leftarrow \hat{\mathbf d}_{cam}\max(\mathbf v\cdot\hat{\mathbf d}_{cam},\,26\,\beta) + 0{,}3\,\Pi_{\hat d}(\mathbf v_{xz}) + \hat{\mathbf y}\,u_z
 $$
-Durante 0,3 s gravedad ×0,2. Cooldown 0,35 s. Requiere geometría a ≤ 45 m en la dirección de la cámara ($\beta=1$); sin ella es un *dash* sin web visual con $\beta=0{,}6$ (pilar 2).
+con $u_z=\max(0{,}2\,v_y,\,5)$. **Quick Zip:** si el zip anterior fue hace menos de 1 s, $u_z=\max(u_z,\ \max(v_y,0)+5)$: el segundo zip no pierde altura. Durante 0,3 s gravedad ×0,2. Enfriamiento 0,25 s. Requiere geometría a ≤ 45 m en la dirección de la cámara ($\beta=1$); sin ella es un *dash* sin web visual con $\beta=0{,}6$ (pilar 2).
 *Animación:* `FireL`+`FireR` simultáneos → nodo `WebZip` (`WebZip_Pull` loop) → al expirar, `WebZip_End` (voltereta corta) → `Fall`.
 
 **Point Zip → Perch → Point Launch:**
-- Objetivos: nodos del grupo `perch_points` (generados offline sobre esquinas de azoteas, antenas, farolas; ver §4.3) con $\cos\angle(\text{cámara},\text{objetivo})>0{,}85$, ≤ 45 m y línea de visión.
-- Viaje a 38 m/s con arranque suave (`smoothstep` 0,12 s), sin gravedad.
-- Llegada → `Perch`. Salto dentro de **0,22 s** tras llegar (o hasta 0,15 s antes, por el buffer) = **Point Launch perfecto**: $\mathbf v=1{,}25\,(18\,\hat{\mathbf d}+19\,\hat{\mathbf y})$; fuera de ventana ×1.
+- Objetivos: nodos del grupo `perch_points` (generados sobre esquinas de azoteas; en la demo, retícula amarilla) con $\cos\angle(\text{cámara},\text{objetivo})>0{,}85$, ≤ 45 m y línea de visión.
+- Viaje a 38 m/s con arranque suave (`smoothstep` 0,12 s), guiado por la web (no se engancha en aristas).
+- Llegada → `Perch`. Salto dentro de **0,22 s** tras llegar (o hasta 0,15 s antes, por el buffer) = **Point Launch Boost**: $\mathbf v=1{,}25\,(18\,\hat{\mathbf d}+19\,\hat{\mathbf y})$ y voltereta; fuera de ventana ×1.
 - *Animación:* `PointZip_Fire` → `PointZip_Travel` (loop, cuerpo alineado con la web) → `Perch_Land` (root motion, 6 f) → `Perch_Idle` → `PointLaunch_Jump` o `PointLaunch_Flip` (perfecto).
 
-### 2.3 Air Trick, Dive y caída libre
+### 2.3 Air Tricks, Dive y caída libre
 
 **Caída libre (Fall):**
 $$
@@ -348,32 +394,41 @@ El arrastre horizontal es casi nulo (0,04 s⁻¹): el momento de la suelta se co
 
 **Picada (Dive):** gravedad ×2,6, arrastre 0,0076 → $v_{term}=58$ m/s, +4 m/s² hacia delante. Entra con el botón de picada si $v_y<0$. El valor de la picada está en la salida: al engancharse, el *catch* (A) redirige la velocidad vertical a tangencial (57 m/s de entrada, pico de 48 m/s limitado por el techo duro).
 
-**Air Trick:** puramente expresivo (no cambia física); dispara `Trick` OneShot con un índice aleatorio sin repetición de los 2 últimos. Bloqueado en picada.
+**Air Tricks por dirección** (como ○+△+stick en el original; puramente expresivos, 0,6 s, bloqueados en picada): adelante = voltereta adelante, atrás = voltereta atrás, izquierda/derecha = tirabuzón con brazos en cruz, sin dirección = giro doble.
 
 | Estado | Blend / clip | Parámetros |
 |---|---|---|
 | Fall | BlendSpace2D `Fall`: X = $\lVert\mathbf v_{xz}\rVert/40$, Y = $v_y/40$ | Muestras: `Fall_Rise_Slow`, `Fall_Rise_Fast`, `Fall_Apex_Hang` (0,0), `Fall_Idle`, `Fall_Fast` |
 | Dive | BlendSpace1D `Dive`: $v/58$ | `Dive_Loop_Slow` → `Dive_Loop_Fast`; entrada `Dive_Enter` (0,3 s) |
 | Dive→Swing | transición 0,10 s | `Dive_Exit_Catch_L/R` como primera muestra del blendspace de swing ($\varphi\approx-1$) |
-| Trick | OneShot (fade 0,1/0,2 s) | `AirTrick_01..08` |
+| Trick | OneShot (fade 0,1/0,2 s) | `AirTrick_Front/Back/RollL/RollR/Spin` según `TrickIndex` |
 
-### 2.4 Wall Run
+### 2.4 Pared: Wall Run, Wall Crawl, esquinas y cornisas
 
-**Entrada** (desde Swing, Fall o WebZip) cuando una colisión tiene $\lvert m_y\rvert\le0{,}3$ y $v\ge4{,}5$ m/s. Ángulo de aproximación $\gamma=\angle(\mathbf v,-\hat{\mathbf m})$:
+**Entrada** (desde Fall, WebZip, sprint en el suelo, o el primer arco del swing) cuando una colisión tiene $\lvert m_y\rvert\le0{,}3$. **Con el clic mantenido y $v\ge4{,}5$ m/s se corre; sin clic, se trepa (queda pegado).** Ángulo de aproximación $\gamma=\angle(\mathbf v,-\hat{\mathbf m})$:
 
-| Modo | Condición | Velocidad inicial |
+| Modo | Condición | Movimiento |
 |---|---|---|
-| Vertical | $\gamma<40^\circ$ (de frente) | $v_{wall}=\max(0{,}85\,v,\,9)$ hacia $+\hat{\mathbf y}$ |
-| Horizontal | $\gamma\ge40^\circ$ (rasante) | $v_{wall}=\max(0{,}85\,(\mathbf v_{xz}\cdot\hat{\mathbf t}),\,9)$ a lo largo de la tangente $\hat{\mathbf t}$ |
+| Carrera vertical | clic, $\gamma<40^\circ$ | $v_{wall}=\max(0{,}85\,v,\,9)$ hacia arriba; mientras se mantiene el clic decae a 9 m/s y **se sostiene** (sube edificios enteros) |
+| Carrera horizontal | clic, $\gamma\ge40^\circ$ | a lo largo de la tangente, nivelada; se sostiene con el clic |
+| Trepar (*wall crawl*) | sin clic | stick relativo a la pared a 5 m/s, sin gravedad; quieto si no hay input |
 
-Si venía de un swing, la web se suelta (`web_released`). **Nunca hay un golpe seco contra la pared**: la energía se reorienta (pilar 1).
+Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia donde apunte el stick (arriba por defecto). Si venía de un swing, la web se suelta (`web_released`). **Nunca hay un golpe seco contra la pared**: la energía se reorienta (pilar 1).
 
-**Física:** gravedad ×0,35; adhesión $-25\,\hat{\mathbf m}$ m/s²; un rayo por frame hacia $-\hat{\mathbf m}$ actualiza la normal (sigue superficies curvas y esquinas interiores). **Salidas:** salto → $11\,\hat{\mathbf m}+9\,\hat{\mathbf y}+0{,}6\,\mathbf v_{xz}$ · rayo del pecho sin pared = cornisa → *vault* $7\,\hat{\mathbf y}-5\,\hat{\mathbf m}$ · rayo del cuerpo sin pared = esquina exterior → Fall · $v_{wall}<2$ (vertical) → despegue · 2,5 s → Fall · gatillo → Swing.
+**Acciones:** salto corriendo en vertical = **tirón de telaraña** hacia arriba (+14 m/s, máx. 30) · salto trepando o en horizontal = salto de pared $11\,\hat{\mathbf m}+9\,\hat{\mathbf y}+0{,}6\,\mathbf v_{xz}$ · picada trepando = soltarse.
 
-*Animación:* el cuerpo se reorienta con **la pared como suelo** (`up = normal`, `forward = +Y` o tangente) y se reutilizan ciclos de carrera. `WallRun_V` (loop) o `WallRun_H` (BlendSpace1D, −1 izquierda / +1 derecha). IK de pies contra la pared (rayos desde las caderas). Entradas `WallRun_Enter_*` de 6–8 f absorben el cambio de orientación; salidas `WallJump_Back`, `WallRun_Vault_Top`, `WallRun_PeelOff`.
+**Cornisa:** si al subir el rayo del pecho deja de ver pared, *vault*: un rayo hacia abajo desde encima del borde encuentra la azotea y el personaje queda de pie sobre ella (antes empujaba contra el borde y rebotaba; corregido).
 
-### 2.5 Aterrizaje
-`Land_Hero` (3 apoyos) si $\lvert v_y\rvert>30$ m/s; `Land_Roll` (root motion, conserva inercia) si $\lVert\mathbf v_{xz}\rVert>10$ m/s; si no `Land_Soft`. Se fuerza 0,35 s y la transición a `Grounded` es AT_END.
+**Esquinas:** exterior trepando = se rodea sola; exterior corriendo con la picada pulsada (buffer 0,5 s) = web a la esquina y la rodea **sin perder velocidad** (nueva normal $=\hat{\mathbf t}$, nueva tangente $=-\hat{\mathbf m}$, colocación por raycast sobre la cara contigua); sin picada = ***corner launch*** $\mathbf v=\hat{\mathbf t}(v_{wall}+6)+6\,\hat{\mathbf y}$ con voltereta. Interior = al chocar con la cara contigua, pasa a ella.
+
+*Animación:* corriendo, el cuerpo se reorienta con **la pared como suelo** (`up = normal`, `forward = +Y` o tangente) y se reutilizan ciclos de carrera. Trepando, pegado a la fachada (`up` = arriba sobre el plano de la pared, `forward = -normal`) con extremidades abiertas y diagonales alternas al moverse. IK de pies contra la pared. HUD: *TREPANDO*.
+
+### 2.5 Suelo: sprint, Charge Jump, aterrizajes y Quick Recovery
+
+- **Sprint:** clic mantenido + dirección → 14 m/s (9 sin clic). Contra una fachada → carrera vertical. Saltar con el clic mantenido dispara la telaraña en el aire (como R2+X en el original).
+- **Charge Jump:** mantener salto carga en 0,7 s; al soltar $v_y=\operatorname{lerp}(9,\,25,\,c^2)$ + 4c m/s hacia delante. Un toque = salto normal. El personaje se agacha en proporción a la carga (*squash*) y el HUD muestra el %.
+- **Aterrizaje:** $\lvert v_y\rvert>25$ → **superhéroe** (rodilla y puño al suelo, frena, 0,7 s); $\lVert\mathbf v_{xz}\rVert>8$ → **rodada** (voltereta, conserva inercia, 0,45 s); si no, suave.
+- **Quick Recovery:** salto durante la rodada → vuelve al aire con $\max(v_{xz},12)$ hacia delante y 13 m/s hacia arriba.
 
 ---
 
@@ -647,7 +702,14 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 | `release_up_boost` / `release_fwd_boost` | 5,5 / 3,0 m/s | Forma del vuelo tras la suelta |
 | `release_max_up_speed` | 17 m/s | Evita lanzamientos cohete |
 | `release_band_height` | 12 m | Por encima de crucero + 12 m no hay boost vertical |
-| `chain_release_angle_deg` / `reattach_delay` | 35° / 0,15 s | Swing encadenado con el gatillo mantenido (sin bonus). 55° → 17–18 m/s y sube hasta ~80 m |
+| `hang_damping` / `hang_pivot_rate` / `hang_wall_offset` | 0,75 s⁻¹ / 0,8 s⁻¹ / 1 m | Péndulo sostenido: amortiguación, convergencia al anclaje y separación de la fachada |
+| `reel_climb_speed` / `hang_min_length` | 5 m/s / 4 m | Subir/bajar por la telaraña colgado |
+| `reattach_delay` | 0,15 s | Con el clic mantenido en el aire, espera antes de disparar (salto + clic desde el suelo) |
+| `swing_jump_forward` / `swing_jump_up` / `hang_jump_up` | 9 / 9 / 12 m/s | Salto en el swing según fase / salto desde colgado |
+| `sprint_speed` / `charge_jump_speed` / `charge_jump_time` | 14 m/s / 25 m/s / 0,7 s | Sprint y Charge Jump |
+| `quick_recovery_window` / `quick_recovery_up` | 0,45 s / 13 m/s | Quick Recovery |
+| `wall_crawl_speed` / `wall_web_pull` / `corner_launch_boost` | 5 m/s / 14 m/s / 6 m/s | Trepar, tirón de web en la pared, corner launch |
+| `quick_zip_window` / `zip_cooldown` | 1 s / 0,25 s | Quick Zip |
 | `steer_accel` / `lane_keep` | 16 m/s² / 1,2 s⁻¹ | Respuesta lateral / estabilidad de carril |
 | `anchor_ideal_forward/up/side` | 18 / 22 / 9 m | Punto ideal (×$k(v)\in[0{,}8,1{,}5]$) |
 | `anchor_min_height` / `anchor_max_distance` | 6 / 65 m | Filtros duros |
@@ -664,7 +726,7 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 | Dive → Swing (catch de picada) | 0,10 s | Inercialización |
 | Swing → Release_* | 0,08 s | Crossfade |
 | Release_* → Fall | 0,25 s | AT_END |
-| Swing_L ↔ Swing_R (encadenado) | 0,15 s | vía `Release_Reach` (0,25 s forzado) |
+| Swing → Hang (sostenido, $v<6$ m/s) | 0,25 s | Crossfade (pose colgada) |
 | Fall ↔ Dive | 0,30 s | Crossfade |
 | Fall → WebZip / WebZip → Fall | 0,06 / 0,20 s | Crossfade |
 | Aire → WallRun_* | 0,12 s | Inercialización |
@@ -756,23 +818,23 @@ void TraversalSystem::UpdateSwingingSystem(float dt)
         // 3b. Sub-pasos del péndulo regulado a 240 Hz
         int   steps = max(1, (int)ceil(dt / T.substep));
         float h     = dt / steps;
-        for (int i = 0; i < steps; ++i)
-            pendulum.Step(h, in.stick.x, in.camRight, in.swingHeld, avoidAccel);
+        for (int i = 0; i < steps; ++i)   // reel: W/S suben o bajan por la web si está colgado
+            pendulum.Step(h, in.stick.x, in.camRight, in.swingHeld, avoidAccel, /*reel*/ in.stick.y);
 
         // 3c. El solver propone, la colisión real dispone
         CollisionResult hit = body.MoveTo(pendulum.pos, dt);  // move_and_slide
         if (hit.valid) {
-            if (TryEnterWallRun(hit.normal, pendulum.vel)) break;
+            // Solo el primer arco (rápido) se convierte en wall run; sostenido, roza sin soltar.
+            if (!pendulum.sustain && TryEnterWallRun(hit.normal, pendulum.vel)) break;
             pendulum.pos = body.position;                     // resync
             pendulum.vel = ProjectOnPlane(pendulum.vel, hit.normal);
         }
         body.velocity = pendulum.vel;
 
-        // 3d. Transiciones
+        // 3d. Transiciones: sin suelta automática. Mantener el clic = misma telaraña
+        //     (el péndulo pasa a modo sostenido y acaba colgado, §2.1).
         if (jumpBuffer > 0.f)                                   { jumpBuffer = 0; Release(/*swingJump*/ true); }
-        else if (in.swingReleased)                              Release(false);
-        else if (in.swingHeld && pendulum.swingAngleDeg >= T.chainReleaseAngleDeg) Release(false);
-        else if (pendulum.ShouldAutoRelease())                  Release(false);
+        else if (!in.swingHeld)                                 Release(false);
         else if (body.IsOnFloor())                              Land();
         break;
     }
@@ -829,11 +891,15 @@ void TraversalSystem::Release(bool swingJump)
 // ----------------------------------------------------------------------------
 // Núcleo: un sub-paso del péndulo regulado (§1.2, §1.3)
 // ----------------------------------------------------------------------------
-void RegulatedPendulum::Step(float h, float steer, Vec3 camRight, bool hold, Vec3 extAccel)
+void RegulatedPendulum::Step(float h, float steer, Vec3 camRight, bool hold, Vec3 extAccel, float reel)
 {
     Vec3  n     = SafeNormalize(pos - pivot, Vec3::Down);
     float ang   = SignedAngleDeg();                               // θs
-    float gEff  = T.g * (vel.y < 0.f ? T.gScaleSwingDown : T.gScaleSwingUp);
+    // Péndulo sostenido: primera inversión del arco con el clic mantenido (§2.1)
+    if (hold && !sustain && ((prevAng > 3.f && ang < 0.f) || (time > 0.5f && Length(vel) < 1.f)))
+        sustain = true;
+    prevAng = ang;
+    float gEff  = T.g * ((vel.y < 0.f || sustain) ? T.gScaleSwingDown : T.gScaleSwingUp);
     Vec3  acc   = {0.f, -gEff, 0.f};
     float speed = Length(vel);
     Vec3  vHat  = SafeNormalize(vel, travel);
@@ -842,7 +908,7 @@ void RegulatedPendulum::Step(float h, float steer, Vec3 camRight, bool hold, Vec
     float drop   = max(pos.y - (pivot.y - length), 0.f);
     float vPred  = sqrt(speed * speed + 2.f * gEff * drop);
     boost = 0.f;
-    if (hold) {
+    if (hold && !sustain) {
         float err = GoalBottomSpeed(gEff) - vPred;               // incluye término de altitud
         boost = Clamp(T.boostGain * err, 0.f, T.boostAccelMax) * Bell(ang, T.boostSigmaDeg);
         acc += vHat * boost;
@@ -852,6 +918,10 @@ void RegulatedPendulum::Step(float h, float steer, Vec3 camRight, bool hold, Vec
     acc += sT * (steer * T.steerAccel);
     acc -= sT * (Dot(vel, sT) * T.laneKeep * (1.f - fabs(steer)));
     acc += ProjectOnPlane(extAccel, n);
+    if (sustain) {                                                // se apaga y va bajo el anclaje
+        acc   -= ProjectOnPlane(vel, n) * T.hangDamping;
+        pivot += (hangPivot - pivot) * (1.f - exp(-T.hangPivotRate * h));
+    }
     // Arrastre + techo blando
     acc -= vel * (T.swingAirDrag * speed);
     if (speed > T.speedSoftCap) acc -= vHat * (T.overspeedDrag * Sq(speed - T.speedSoftCap));
@@ -861,7 +931,9 @@ void RegulatedPendulum::Step(float h, float steer, Vec3 camRight, bool hold, Vec
 
     // Regulación de longitud (clearance) + conservación del momento angular
     float lPrev   = length;
-    float lTarget = Clamp(min(length, pivot.y - (groundY + T.groundClearance)), T.ropeMin, T.ropeMax);
+    float minLen  = sustain ? T.hangMinLength : T.ropeMin;
+    if (sustain) length -= reel * T.reelClimbSpeed * h;          // W/S: subir/bajar por la web
+    float lTarget = Clamp(min(length, pivot.y - (groundY + T.groundClearance)), minLen, T.ropeMax);
     length = MoveToward(length, lTarget, T.reelSpeed * h);
 
     // Restricción unilateral con proyección que preserva la rapidez
@@ -937,7 +1009,7 @@ void TraversalSystem::PushAnimatorParameters(float dt)
 
 ### A. Demo jugable (Windows)
 
-`godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un maniquí animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
+`godot/` es un proyecto de Godot 4.7 completo: `demo/` monta por código una ciudad procedural (~800 edificios), un personaje animado proceduralmente con las reglas de la §3, cámara orbital y HUD sobre el runtime de `swing_system/`. El traje (`demo/suit.gdshader`) reproduce la esfera de referencia: tela roja con microtextura hexagonal y telaraña negra brillante en relieve (radial en pecho y espalda, a lo largo de brazos y piernas), con la propia imagen de referencia proyectada como máscara (`demo/textures/suit_reference.webp`, importada con compresión S3TC). `demo/autopilot.gd` prueba el control real con tres escenarios (`tour`, `hang`, `moves`) y una pose para capturas. Exportar: abrir `godot/` en Godot 4.7 → *Proyecto → Exportar → Windows Desktop* (preset incluido, PCK embebido), o por línea de comandos `godot --headless --path godot --export-release "Windows Desktop" build/WebSwingDemo.exe`. Prueba sin interfaz: `godot --headless --path godot --fixed-fps 60 -- --autopilot=120` (recorre la ciudad y sale con un resumen JSON).
 
 **Build reducido (28 MB).** `godot/export/build_slim_template.sh` compila una plantilla de exportación propia de Godot 4.7.2: renderer Compatibility (OpenGL 3.3) sin Vulkan/D3D12, solo los módulos que usa la demo (GDScript, FreeType, text server básico, física 3D de Godot), sin física/navegación 2D, XR ni GUI avanzada, y un *build profile* (`slim_template.build`) que desregistra 104 clases no usadas (partículas, GI, decals, sprites 3D, audio effects…) para que el enlazado con LTO elimine su código. Resultado: 109 MB → 28 MB. La misma configuración compilada para Linux reproduce exactamente la partida de referencia (mismo resumen de autopiloto) y renderiza igual.
 
@@ -989,7 +1061,8 @@ InputMap: `move_left/right/forward/back`, `swing` (R2), `jump` (✕), `web_zip` 
 
 | Pieza | Validación realizada |
 |---|---|
-| Física (Python) | 14 tests unitarios + simulador; `python3 -m unittest discover -s tools/swing_lab` |
+| Física (Python) | 17 tests unitarios (incl. péndulo sostenido: no se suelta, queda quieto bajo el anclaje, reel) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
+| Demo (Godot) | Autopiloto con escenarios `tour` (120 s), `hang` (mantener el clic: 1 sola web, quieto a los 6,9 s, W sube 12,6 → 5,1 m) y `moves` (Charge Jump al 100 %, Web/Quick Zip, truco, sprint → wall run vertical hasta la azotea → vault, trepar, salto de pared), con el motor oficial y con la plantilla slim (resultados idénticos) |
 | Baker de Blender | Test end-to-end con `bpy` 5.0.1 (trayectoria < 1 mm, curvas, IK, GLB con 42 canales) |
 | GDScript | Compila sin errores en Godot 4.7.2; la demo corre 120 s con autopiloto sin errores (balanceo, picada, wall run, aterrizajes) y el `.exe` exportado se validó cargando su PCK embebido. `AnimationTree`, IK de esqueleto y *look-at* no se han probado con un rig real (la demo usa un maniquí procedural) |
 
