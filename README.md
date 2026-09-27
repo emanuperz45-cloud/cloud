@@ -2,7 +2,8 @@
 
 Diseño técnico e implementación de referencia de un sistema de *web swinging* en tercera persona:
 física de péndulo regulado, FSM de movimiento aéreo, pipeline de animación procedural/IK e
-integración con Blender.
+integración con Blender. La demo añade además el planeo con **Web Wings**, túneles de viento,
+corrientes ascendentes y el **Super Slingshot** de *Spider-Man 2*.
 
 - **Documento de diseño:** [`docs/DISENO_SISTEMA_BALANCEO.md`](docs/DISENO_SISTEMA_BALANCEO.md)
 - **Física, simulador y baker de Blender (Python):** [`tools/swing_lab/`](tools/swing_lab)
@@ -40,6 +41,8 @@ godot --headless --path godot --export-release "Windows Slim" build/WebSwingDemo
 godot --headless --path godot --fixed-fps 60 -- --autopilot=120 --scenario=tour
 godot --headless --path godot --fixed-fps 60 -- --autopilot=26 --scenario=hang   # mantener el clic
 godot --headless --path godot --fixed-fps 60 -- --autopilot=23 --scenario=moves  # moveset completo
+godot --headless --path godot --fixed-fps 60 -- --autopilot=20 --scenario=glide  # Web Wings y viento
+godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sling  # Slingshot y loop
 ```
 
 Controles (moveset del original, ver §2.0 del documento):
@@ -52,8 +55,13 @@ Controles (moveset del original, ver §2.0 del documento):
 | Sprint (suelo) / correr por la pared (sin clic se trepa) | Clic izq. mantenido | RT / R2 |
 | Picada / girar una esquina corriendo por la pared | Mayús | B |
 | Point zip al punto amarillo | Q o clic derecho | LT / L2 |
-| Trucos según dirección | F + WASD | Y + stick |
+| Trucos según dirección; **mantenido en un balanceo rápido = loop** | F + WASD | LB + stick |
+| **Web Wings** en el aire (otra vez = plegar): W picar, S frenar/subir, A/D alabear; abrirlas en picada = impulso | G, Ctrl o rueda | Y |
+| **Super Slingshot**: mantener point zip y salto, soltar salto para lanzar (soltar point zip cancela) | Q + Espacio | LT + A |
 | Reaparecer / ayuda | R / H | Back / Start |
+
+En la ciudad hay **túneles de viento** (anillos azules sobre 5 avenidas) que llevan a ~140 km/h a
+quien entra planeando y **corrientes ascendentes** (columnas sobre rejillas en azoteas) que elevan.
 
 `tools/swing_lab/swing_core.py` es la fuente de verdad de la física; `godot/swing_system/regulated_pendulum.gd`
 es un port 1:1. Si cambias un parámetro, cámbialo en ambos (`SwingTuning`) y vuelve a correr el simulador.

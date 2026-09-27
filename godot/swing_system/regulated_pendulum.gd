@@ -34,7 +34,9 @@ var last_release_perfect := false
 ## arco se amortigua y el pivote converge al anclaje real (queda colgado).
 var sustain := false
 var hang_pivot := Vector3.ZERO
-var _prev_ang := 0.0
+var swing_axis := Vector3.ZERO    ## eje de giro del arco al enganchar
+var orbit := 0.0                  ## rad recorridos alrededor del pivote
+var loops := 0                    ## vueltas completas (loop de loop)
 
 
 func _init(p_tuning: SwingTuning) -> void:
@@ -54,7 +56,9 @@ func duplicate_state() -> RegulatedPendulum:
 	p.cruise_y = cruise_y
 	p.sustain = sustain
 	p.hang_pivot = hang_pivot
-	p._prev_ang = _prev_ang
+	p.swing_axis = swing_axis
+	p.orbit = orbit
+	p.loops = loops
 	p.time = time
 	return p
 
@@ -145,7 +149,9 @@ func attach(p_pos: Vector3, p_vel: Vector3, p_anchor: Vector3, p_travel: Vector3
 	speed = vel.length()
 	swing_angle_deg = signed_angle_deg()
 	phase = clampf(swing_angle_deg / PHASE_REF_DEG, -1.0, 1.0)
-	_prev_ang = swing_angle_deg
+	swing_axis = rope_dir().cross(vel).normalized()
+	orbit = 0.0
+	loops = 0
 
 
 ## Devuelve la velocidad de salida; last_release_perfect indica si cayó en la ventana.
@@ -178,18 +184,25 @@ func goal_bottom_speed(g_eff: float) -> float:
 
 
 ## Un sub-paso de integración. steer en [-1, 1]; steer_right = derecha de cámara;
-## reel en [-1, 1] sube (+) o baja (-) por la telaraña cuando está colgado.
+## reel en [-1, 1] sube (+) o baja (-) por la telaraña cuando está colgado;
+## tighten recoge cuerda hasta el radio en el que cabe un loop (arco rápido).
 func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
-		hold: bool = true, external_accel: Vector3 = Vector3.ZERO, reel: float = 0.0) -> void:
+		hold: bool = true, external_accel: Vector3 = Vector3.ZERO, reel: float = 0.0,
+		tighten: bool = false) -> void:
 	time += h
 	var n := rope_dir()
 	var ang := signed_angle_deg()
 
-	# 0) Péndulo sostenido: primera inversión del arco (o casi sin velocidad).
-	if hold and not sustain and ((_prev_ang > 3.0 and ang < 0.0) \
+	# 0) Velocidad angular alrededor del eje de giro inicial: negativa = el arco
+	# se ha invertido. Cruzar la vertical por arriba NO lo es (loop de loop).
+	var w := n.cross(vel).dot(swing_axis) / maxf((pos - pivot).length(), 0.1)
+	orbit += w * h
+	if orbit >= TAU * (loops + 1):
+		loops += 1
+	# Péndulo sostenido: primera inversión, tras una vuelta o casi sin velocidad.
+	if hold and not sustain and (w < -0.05 or loops >= 1 \
 			or (time > 0.5 and vel.length() < 1.0)):
 		sustain = true
-	_prev_ang = ang
 
 	# 1) Gravedad asimétrica (simétrica al colgar: la asimetría bombea energía)
 	var g_scale := tuning.gravity_scale_swing_down if vel.y < 0.0 else tuning.gravity_scale_swing_up
@@ -237,6 +250,11 @@ func step(h: float, steer: float = 0.0, steer_right: Vector3 = Vector3.ZERO,
 	if sustain:
 		min_len = tuning.hang_min_length
 		length -= reel * tuning.reel_climb_speed * h
+	var v_now := vel.length()
+	if tighten and not sustain and v_now > tuning.loop_min_speed:
+		# Cerrar el arco: con la cuerda corta la energía alcanza para la vuelta.
+		var g_up := tuning.g * tuning.gravity_scale_swing_up
+		max_len = minf(max_len, tuning.loop_radius_factor * v_now * v_now / (5.0 * g_up))
 	var l_target := clampf(minf(length, max_len), min_len, tuning.rope_max)
 	length = move_toward(length, l_target, tuning.reel_speed * h)
 	if length < l_target:

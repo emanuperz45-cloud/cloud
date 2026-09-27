@@ -9,7 +9,8 @@ extends Node
 ##   -> FireR (OneShot) -> Trick (OneShot) -> output
 ## Estados de Locomotion: Grounded, Fall, Dive, Swing_L, Swing_R, Release_Neutral,
 ##   Release_Flip, Release_Reach, WebZip, PointZip, Perch, WallRun_V, WallRun_H,
-##   Land_Soft, Land_Roll, Land_Hero. Los tiempos de mezcla viven en las transiciones
+##   Land_Soft, Land_Roll, Land_Hero, Glide (BlendSpace2D cabeceo x alabeo),
+##   Slingshot (BlendSpace1D por carga). Los tiempos de mezcla viven en las transiciones
 ##   (xfade_time), con los valores de la tabla de la sección 5.
 
 const P_PLAYBACK := "parameters/Locomotion/playback"
@@ -23,6 +24,8 @@ const P_LEAN := "parameters/Lean/add_amount"
 const P_FIRE_L := "parameters/FireL/request"
 const P_FIRE_R := "parameters/FireR/request"
 const P_TRICK := "parameters/Trick/request"
+const P_GLIDE := "parameters/Locomotion/Glide/blend_position"
+const P_SLING := "parameters/Locomotion/Slingshot/blend_position"
 
 const STATE_NODES := {
 	TraversalController.State.GROUNDED: "Grounded",
@@ -31,6 +34,8 @@ const STATE_NODES := {
 	TraversalController.State.WEB_ZIP: "WebZip",
 	TraversalController.State.POINT_ZIP: "PointZip",
 	TraversalController.State.PERCH: "Perch",
+	TraversalController.State.GLIDE: "Glide",
+	TraversalController.State.SLINGSHOT: "Slingshot",
 }
 
 @export var controller: TraversalController
@@ -40,6 +45,8 @@ const STATE_NODES := {
 @export var web_line: WebLine
 ## Segunda web opcional: al encadenar, la anterior termina su caída mientras sale la nueva.
 @export var web_line_alt: WebLine
+## Webs extra para acciones con dos manos (Super Slingshot) sin reciclar las que caen.
+@export var extra_web_lines: Array[WebLine] = []
 @export var hand_socket_left: Node3D     ## BoneAttachment3D en la muñeca
 @export var hand_socket_right: Node3D
 
@@ -74,7 +81,7 @@ var _one_shot_state := ""
 var _one_shot_timer := 0.0
 var _playback: AnimationNodeStateMachinePlayback
 var _current_node := ""
-var _active_web: WebLine
+var _active_webs: Array[WebLine] = []
 
 
 func _ready() -> void:
@@ -156,6 +163,10 @@ func _update_blend_params(spd: float) -> void:
 	anim_tree.set(P_WALL_H, side)
 	anim_tree.set(P_GLOAD, _g_load)
 	anim_tree.set(P_LEAN, _lean)
+	var w := controller.wings
+	anim_tree.set(P_GLIDE, Vector2(-controller.move_input.y,
+			w.bank / deg_to_rad(controller.tuning.glide_max_bank_deg)))
+	anim_tree.set(P_SLING, controller.slingshot_charge)
 
 
 func _on_web_fired(hand: int, anchor: Vector3) -> void:
@@ -164,24 +175,31 @@ func _on_web_fired(hand: int, anchor: Vector3) -> void:
 			anim_tree.set(P_FIRE_L, AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
 		if hand >= TraversalController.HAND_BOTH:
 			anim_tree.set(P_FIRE_R, AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
-	_active_web = _pick_web()
-	if _active_web:
-		_active_web.fire(_socket(hand), anchor)
+	var web := _pick_web()
+	if web:
+		web.fire(_socket(hand), anchor)
+		_active_webs.append(web)
 
 
-## Usa una web libre; si ambas están en uso, recicla la que ya se está soltando.
+## Usa una web libre; si no hay, recicla una que ya se está soltando.
 func _pick_web() -> WebLine:
-	if web_line_alt == null:
-		return web_line
-	for w: WebLine in [web_line, web_line_alt]:
+	var pool: Array[WebLine] = [web_line]
+	if web_line_alt:
+		pool.append(web_line_alt)
+	pool.append_array(extra_web_lines)
+	for w in pool:
 		if w.phase == WebLine.Phase.HIDDEN:
 			return w
-	return web_line_alt if web_line.phase != WebLine.Phase.RELEASED else web_line
+	for w in pool:
+		if w.phase == WebLine.Phase.RELEASED:
+			return w
+	return pool[0]
 
 
 func _on_web_released(_hand: int, perfect: bool) -> void:
-	if _active_web:
-		_active_web.release()
+	for web in _active_webs:
+		web.release()
+	_active_webs.clear()
 	if controller.last_release_chained:
 		# Swing encadenado: el brazo ya busca la siguiente web.
 		_one_shot_state = "Release_Reach"
@@ -256,6 +274,19 @@ func _update_orientation(delta: float) -> void:
 				fwd = Vector3.UP if c.wall_vertical else RegulatedPendulum.safe_normalized(
 						RegulatedPendulum.project_on_plane(v, c.wall_normal), fwd)
 			rate = orient_rate_swing
+		TraversalController.State.GLIDE:
+			# Planeo: cabeza hacia la velocidad, pecho al suelo, alabeo con el viraje.
+			up = RegulatedPendulum.safe_normalized(v, c.travel_dir)
+			fwd = RegulatedPendulum.project_on_plane(Vector3.DOWN, up)
+			if fwd.length_squared() < 1e-4:
+				fwd = c.travel_dir
+			fwd = fwd.normalized().rotated(up, -c.wings.bank)
+			rate = 10.0
+		TraversalController.State.SLINGSHOT:
+			# Tensado: de cara al lanzamiento, echado hacia atrás con la carga.
+			fwd = c.slingshot_aim
+			up = (Vector3.UP - c.slingshot_aim * 0.35 * c.slingshot_charge).normalized()
+			rate = 12.0
 		TraversalController.State.FALL, TraversalController.State.WEB_ZIP:
 			# Inclinación hacia la aceleración percibida (overlap del torso).
 			up = (Vector3.UP + RegulatedPendulum.flat(v) * 0.015).normalized()

@@ -4,7 +4,7 @@ import unittest
 from dataclasses import replace
 
 import city_sim
-from swing_core import (AnchorCandidate, RegulatedPendulum, SwingInput, SwingTuning, V3,
+from swing_core import (UP, AnchorCandidate, Glider, RegulatedPendulum, SwingInput, SwingTuning, V3,
                         score_anchor, step_air, terminal_velocity)
 
 H = 1.0 / 240.0
@@ -177,6 +177,143 @@ class HoldToHangTests(unittest.TestCase):
             p.step(H, SwingInput(reel=-1.0))
         self.assertLessEqual(p.bottom_y(), p.pivot.y)
         self.assertGreaterEqual(p.bottom_y(), p.ground_y + t.ground_clearance - 1e-6)
+
+
+class LoopTests(unittest.TestCase):
+    def test_fast_short_swing_loops_then_settles(self):
+        t = replace(SwingTuning(), pivot_center_strength=0.0, pivot_shift_max=0.0)
+        p = RegulatedPendulum(t)
+        anchor = V3(0.0, 30.0, 0.0)
+        p.attach(V3(0.0, 21.0, 0.0), V3(0.0, 0.0, 32.0), anchor, V3(0, 0, 1), ground_y=-100.0)
+        sustain_before_loop = False
+        for _ in range(int(4.0 / H)):
+            p.step(H)
+            if p.loops == 0 and p.sustain:
+                sustain_before_loop = True
+            if p.loops >= 1:
+                break
+        self.assertEqual(p.loops, 1)                     # vuelta completa sin soltarse
+        self.assertFalse(sustain_before_loop)            # cruzar la vertical no es inversión
+        for _ in range(int(25.0 / H)):
+            p.step(H)
+        self.assertTrue(p.sustain)
+        self.assertLess(p.vel.length(), 0.5)             # y acaba colgado
+
+    def test_tighten_turns_a_fast_normal_swing_into_a_loop(self):
+        # Swing normal de ciudad (cuerda ~30 m): sin tighten no hay loop; con tighten
+        # mantenido cerca del fondo la cuerda se recoge y el arco da la vuelta.
+        results = []
+        for tighten in (False, True):
+            p = RegulatedPendulum(SwingTuning())
+            p.attach(V3(0, 60, 0), V3(0, -10, 38), V3(0, 88, 18), V3(0, 0, 1), ground_y=0.0)
+            for _ in range(int(5.0 / H)):
+                p.step(H, SwingInput(tighten=tighten))
+                if p.loops:
+                    break
+            results.append((p.loops, p.length))
+        self.assertEqual(results[0][0], 0)
+        self.assertEqual(results[1][0], 1)
+        self.assertLess(results[1][1], 20.0)
+
+    def test_normal_swing_does_not_loop(self):
+        p = RegulatedPendulum(SwingTuning())
+        p.attach(V3(0, 50, 0), V3(0, 0, 20), V3(0, 72, 18), V3(0, 0, 1), ground_y=0.0)
+        for _ in range(int(10.0 / H)):
+            p.step(H)
+        self.assertEqual(p.loops, 0)
+
+
+class GliderTests(unittest.TestCase):
+    """Web Wings: fineza, picado, encabritado, pérdida, viraje, túnel y corriente ascendente."""
+
+    def fly(self, g, seconds, pitch=0.0, roll=0.0, **kw):
+        pos = V3(0, 500, 0)
+        for _ in range(int(seconds / H)):
+            pos = pos + g.step(H, pitch, roll, **kw) * H
+        return pos
+
+    def test_neutral_glide_ratio(self):
+        g = Glider(SwingTuning())
+        g.open(V3(0, -2, 20))
+        self.fly(g, 10.0)                            # estabiliza
+        a = V3(0, 500, 0)
+        b = self.fly(g, 10.0)
+        ratio = b.horizontal().length() / (a.y - b.y)
+        self.assertGreater(ratio, 7.0)
+        self.assertLess(ratio, 9.5)
+        self.assertAlmostEqual(g.speed, 20.7, delta=1.0)
+
+    def test_dive_gains_speed_and_pull_up_trades_it_for_height(self):
+        g = Glider(SwingTuning())
+        g.open(V3(0, 0, 20))
+        self.fly(g, 12.0, pitch=1.0)
+        self.assertGreater(g.speed, 45.0)
+        start = V3(0, 500, 0)
+        top = start
+        pos = start
+        for _ in range(int(6.0 / H)):
+            pos = pos + g.step(H, -1.0, 0.0) * H
+            top = pos if pos.y > top.y else top
+        self.assertGreater(top.y - start.y, 25.0)     # convierte velocidad en altura
+        self.assertLess(g.speed, 25.0)
+
+    def test_stall_drops_the_nose_and_recovers(self):
+        g = Glider(SwingTuning())
+        g.open(V3(0, 5, 12))
+        min_gamma, min_speed, stalls = 1.0, 99.0, 0
+        for _ in range(int(8.0 / H)):                 # encabritar sin parar
+            was = g.stalled
+            g.step(H, -1.0, 0.0)
+            stalls += int(g.stalled and not was)
+            min_gamma = min(min_gamma, g.gamma)
+            min_speed = min(min_speed, g.speed)
+        self.assertGreaterEqual(stalls, 1)
+        self.assertLess(min_gamma, math.radians(-20.0))   # el morro cae
+        self.assertGreater(min_speed, 5.0)                # sin pérdida profunda
+
+    def test_full_bank_turns_around(self):
+        g = Glider(SwingTuning())
+        g.open(V3(0, -2, 20))
+        psi0 = g.psi
+        self.fly(g, 6.0, roll=1.0)
+        self.assertLess(g.psi - psi0, -math.pi / 2)   # derecha = ψ decreciente
+
+    def test_dive_open_boost(self):
+        g = Glider(SwingTuning())
+        g.open(V3(0, -40, 10), from_dive=True)
+        self.assertTrue(g.boosted)
+        self.assertAlmostEqual(g.speed, V3(0, -40, 10).length() + SwingTuning().glide_dive_boost, delta=1e-6)
+
+    def test_tunnel_carries_to_cruise_and_keeps_on_axis(self):
+        t = SwingTuning()
+        g = Glider(t)
+        g.open(V3(0, -2, 20))
+        axis_o = V3(0, 500, 0)
+        axis_d = V3(0, -0.03, 1).normalized()
+        pos = V3(5, 497, 0)                              # entra descentrado
+        max_off = 0.0
+        for i in range(int(12.0 / H)):
+            rel = pos - axis_o
+            offset = axis_d * rel.dot(axis_d) - rel      # hacia el eje
+            pos = pos + g.step(H, 0.0, 0.0, tunnel_dir=axis_d, tunnel=1.0,
+                               tunnel_offset=offset) * H
+            if i * H > 4.0:
+                max_off = max(max_off, offset.length())
+        self.assertLess(max_off, 2.0)                    # sin stick, el túnel te lleva
+        self.assertGreater(g.speed, 34.0)
+        self.assertLess(g.speed, t.glide_tunnel_speed)   # empuje con techo
+        g2 = Glider(SwingTuning())
+        g2.open(V3(0, -2, 20))
+        end = self.fly(g2, 4.0, updraft=1.0)
+        self.assertGreater(end.y, 500.0 + 30.0)
+        # Cruzar una columna de 12 m a 20 m/s deja un impulso que dura al salir.
+        g3 = Glider(SwingTuning())
+        g3.open(V3(0, -2, 20))
+        self.fly(g3, 0.6, updraft=1.0)
+        lift_out = g3.lift
+        after = self.fly(g3, 1.5)
+        self.assertGreater(lift_out, 10.0)
+        self.assertGreater(after.y, 500.0 + 5.0)
 
 
 class AirAndAnchorTests(unittest.TestCase):

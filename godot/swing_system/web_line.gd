@@ -7,12 +7,16 @@ extends MeshInstance3D
 ## ATTACHED: Verlet con extremos fijos; `tension01` (lo escribe el animador o
 ##   el controller) controla la holgura: tensa = recta, floja = catenaria.
 ## RELEASED: la mano se suelta, la web cae colgando del anclaje y se desvanece.
+## La cinta se afina hacia el anclaje y allí queda una estrella de impacto (splat).
 ## El material debe usar vertex color como albedo y transparencia alpha.
 
 enum Phase { HIDDEN, SHOOTING, ATTACHED, RELEASED }
 
 @export var segments := 16
 @export var width := 0.05
+@export var tip_width := 0.025       ## ancho en el anclaje
+@export var splat_radius := 0.55
+@export var splat_spokes := 7
 @export var shoot_time := 0.09
 @export var fade_time := 0.6
 @export var gravity := 9.81
@@ -144,12 +148,35 @@ func _rebuild_mesh() -> void:
 		var p := _points[i]
 		var tangent := (_points[mini(i + 1, n - 1)] - _points[maxi(i - 1, 0)]).normalized()
 		var to_cam := (cam.global_position - p).normalized()
-		var side := tangent.cross(to_cam).normalized() * (width * 0.5)
 		var u := float(i) / float(n - 1)
+		var side := tangent.cross(to_cam).normalized() * (lerpf(width, tip_width, u) * 0.5)
 		_imesh.surface_set_color(col)
 		_imesh.surface_set_uv(Vector2(u, 0.0))
 		_imesh.surface_add_vertex(p - side)
 		_imesh.surface_set_color(col)
 		_imesh.surface_set_uv(Vector2(u, 1.0))
 		_imesh.surface_add_vertex(p + side)
+	_imesh.surface_end()
+	if phase != Phase.SHOOTING:
+		_add_splat(cam, col)
+
+
+## Estrella de impacto en el anclaje: radios finos en el plano que mira a la cámara.
+func _add_splat(cam: Camera3D, col: Color) -> void:
+	var to_cam := (cam.global_position - _anchor).normalized()
+	var a := RegulatedPendulum.safe_normalized(to_cam.cross(Vector3.UP), Vector3.RIGHT)
+	var b := to_cam.cross(a).normalized()
+	var center := _anchor + to_cam * 0.05
+	var grow := clampf(_t / 0.12, 0.0, 1.0) if phase == Phase.ATTACHED else 1.0
+	var r := splat_radius * grow
+	_imesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES, material)
+	for i in splat_spokes:
+		var ang := TAU * float(i) / splat_spokes + 0.3
+		var dir := a * cos(ang) + b * sin(ang)
+		var perp := a * -sin(ang) + b * cos(ang)
+		var len := r * (0.75 + 0.25 * sin(float(i) * 2.7))
+		for v: Vector3 in [center + perp * 0.025, center - perp * 0.025, center + dir * len]:
+			_imesh.surface_set_color(col)
+			_imesh.surface_set_uv(Vector2.ZERO)
+			_imesh.surface_add_vertex(v)
 	_imesh.surface_end()

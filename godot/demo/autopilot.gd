@@ -8,6 +8,10 @@ extends Node
 ##  moves: charge jump, web zip + quick zip, truco, colgarse y subir por la web,
 ##         sprint contra una fachada, wall run, trepar y salto de pared
 ##  pose : personaje quieto en la calle con la cámara de frente y cerca (traje)
+##  glide: Web Wings desde lo alto: planeo, picada + alas (impulso), viraje,
+##         túnel de viento de la avenida x = 0 y corriente ascendente
+##  sling: Super Slingshot desde el suelo (carga completa), cancelación y loop
+##         (clic + truco mantenidos en un swing rápido)
 
 var main: Node3D
 var player: TraversalController
@@ -43,6 +47,16 @@ func _ready() -> void:
 	player.quick_recovered.connect(func() -> void: _count("quick_recovery"))
 	player.corner_turned.connect(func(l: bool) -> void:
 		_count("corner_launch" if l else "corner_turn"))
+	player.looped.connect(func(n: int) -> void: _count("loop_%d" % n))
+	player.state_changed.connect(func(a: int, b: int) -> void:
+		if OS.has_environment("AP_DEBUG"):
+			print("[dbg] t=%.2f %s -> %s pos=%s v=%s" % [_t, a, b, player.global_position, player.velocity]))
+	player.wings_opened.connect(func(b: bool) -> void: _count("wings_boost" if b else "wings"))
+	player.wings_closed.connect(func() -> void: _count("wings_closed"))
+	player.slingshot_launched.connect(func(c: float) -> void:
+		_count("slingshot")
+		_mark["sling_charge"] = snappedf(c, 0.01)
+		_mark["sling_speed"] = snappedf(player.velocity.length(), 0.1))
 
 
 func _count(key: String) -> void:
@@ -51,7 +65,8 @@ func _count(key: String) -> void:
 
 func _press(action: String, down: bool) -> void:
 	if down:
-		Input.action_press(action)
+		if not Input.is_action_pressed(action):   # re-pulsar cada frame = "just pressed" continuo
+			Input.action_press(action)
 	else:
 		Input.action_release(action)
 
@@ -65,7 +80,7 @@ func _physics_process(delta: float) -> void:
 	_t += delta
 	var p := player.global_position
 	var sub := hud._state_name()
-	sub = sub.split(" ")[0] if sub.begins_with("CARGANDO") else sub
+	sub = sub.split(" ")[0] if sub.begins_with("CARGANDO") or sub.begins_with("SLINGSHOT") else sub
 	_stats.substates[sub] = snappedf(_stats.substates.get(sub, 0.0) + delta, 0.01)
 	_stats.max_speed = maxf(_stats.max_speed, player.velocity.length())
 	_stats.min_y = minf(_stats.min_y, p.y)
@@ -79,6 +94,10 @@ func _physics_process(delta: float) -> void:
 			_hang()
 		"moves":
 			_moves()
+		"glide":
+			_glide()
+		"sling":
+			_sling()
 		"pose":
 			if _at(0.02):
 				_place(Vector3(-4.0, 0.95, 3.0), Vector3.FORWARD)
@@ -100,7 +119,7 @@ func _physics_process(delta: float) -> void:
 				img.save_png(path)
 				print("[autopilot] captura -> ", path, " (", sub, ")")
 	if _t >= duration:
-		for action in ["swing", "move_forward", "move_right", "dive", "jump"]:
+		for action in ["swing", "move_forward", "move_right", "move_back", "dive", "jump", "point_zip"]:
 			Input.action_release(action)
 		print("[autopilot] RESUMEN ", JSON.stringify(_stats))
 		main.get_tree().quit()
@@ -187,6 +206,103 @@ func _moves() -> void:
 	if _at(21.6):
 		_mark["after_wall_jump"] = hud._state_name()
 	_stats["moves"] = _mark
+
+
+# --- glide: Web Wings -----------------------------------------------------
+func _glide() -> void:
+	var w := player.wings
+	# 1) Desde 150 m sobre la avenida x = 0: alas en neutro, dentro del túnel.
+	if _at(0.02):
+		_place(Vector3(0.0, 80.0, 200.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+		player.velocity = Vector3(0.0, -2.0, -16.0)
+	if _at(0.3):
+		_tap("glide")
+	if _at(0.4):
+		_mark["open_speed"] = snappedf(w.speed, 0.1)
+	if _t > 0.4 and _t < 6.0 and player.state == TraversalController.State.GLIDE:
+		_mark["tunnel_max"] = maxf(_mark.get("tunnel_max", 0.0), snappedf(player.in_tunnel, 0.01))
+		_mark["tunnel_speed_max"] = maxf(_mark.get("tunnel_speed_max", 0.0), snappedf(w.speed, 0.1))
+	if _at(6.0):
+		_mark["state_6s"] = hud._state_name()
+		_mark["y_6s"] = snappedf(player.global_position.y, 0.1)
+	# 2) Picada fuera del túnel y abrir las alas a > 30 m/s: impulso.
+	if _at(6.5):
+		_place(Vector3(40.0, 230.0, 40.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+	_press("dive", _t > 6.6 and _t < 9.2)
+	if _at(9.25):
+		_mark["dive_speed"] = snappedf(player.velocity.length(), 0.1)
+		_tap("glide")
+	if _at(9.3):
+		_mark["boosted"] = w.boosted
+		_mark["boost_speed"] = snappedf(w.speed, 0.1)
+	# 3) Viraje a la derecha (alabeo) y encabritar hasta la pérdida.
+	_press("move_right", _t > 9.5 and _t < 11.0)
+	if _at(10.9):
+		_mark["bank_deg"] = snappedf(rad_to_deg(w.bank), 0.1)
+	_press("move_back", _t > 11.2 and _t < 17.0)
+	if _t > 11.2 and _t < 17.0 and w.stalled:
+		_mark["stalled"] = true
+	# 4) Corriente ascendente: planear sobre la primera columna.
+	if _at(17.5) and player.wind_field and not player.wind_field.updrafts.is_empty():
+		# Entra en la columna desde 15 m por el lado despejado (sin fachadas delante).
+		var u: WindField.Updraft = player.wind_field.updrafts[0]
+		var dir := _open_direction(u.center + Vector3.UP * 8.0, 60.0)
+		_place(u.center + Vector3.UP * 8.0 - dir * 15.0, dir)
+		player.state = TraversalController.State.FALL
+		player.velocity = dir * 15.0
+		_mark["updraft_y0"] = snappedf(player.global_position.y, 0.1)
+	if _at(17.6):
+		_tap("glide")
+	if _t > 17.6 and _t < 19.5 and player.state == TraversalController.State.GLIDE:
+		_mark["updraft_max"] = maxf(_mark.get("updraft_max", 0.0), snappedf(player.in_updraft, 0.01))
+		_mark["updraft_y_max"] = maxf(_mark.get("updraft_y_max", -99.0), snappedf(player.global_position.y, 0.1))
+	if _at(19.5):
+		_mark["state_19s"] = hud._state_name()
+	_stats["glide"] = _mark
+
+
+func _open_direction(from: Vector3, dist: float) -> Vector3:
+	var space := player.get_world_3d().direct_space_state
+	var best := Vector3.FORWARD
+	var best_d := -1.0
+	for i in 16:
+		var d := Vector3.FORWARD.rotated(Vector3.UP, TAU * i / 16.0)
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+				from - d * 15.0, from + d * dist, 1))
+		var free: float = dist + 15.0 if hit.is_empty() else ((hit.position as Vector3) - (from - d * 15.0)).length()
+		if free > best_d:
+			best_d = free
+			best = d
+	return best
+
+
+# --- sling: Super Slingshot y loop -----------------------------------------
+func _sling() -> void:
+	var ground := Vector3(0.0, 0.95, 27.0)
+	if _at(0.02):
+		_place(ground, Vector3.FORWARD)
+	# Q mantenido + ESPACIO mantenido 1.4 s -> soltar ESPACIO (abajo: los dos tramos).
+	if _at(1.0):
+		_mark["state_charging"] = hud._state_name()
+	if _at(2.4):
+		_mark["y_after"] = snappedf(player.global_position.y, 0.1)
+	# Cancelar: soltar Q con ESPACIO pulsado -> vuelve al suelo sin lanzar.
+	if _at(5.0):
+		_place(ground, Vector3.FORWARD)
+	_press("point_zip", (_t > 5.2 and _t < 5.8) or (_t > 0.3 and _t < 2.0))
+	_press("jump", (_t > 5.3 and _t < 6.2) or (_t > 0.5 and _t < 1.9))
+	if _at(6.0):
+		_mark["after_cancel"] = hud._state_name()
+	# Loop: swing rápido con el clic mantenido y truco mantenido (cierra el arco).
+	if _at(7.0):
+		_place(Vector3(0.0, 60.0, 30.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+		player.velocity = Vector3(0.0, -6.0, -44.0)
+	_press("swing", _t > 7.05 and _t < 13.0)
+	_press("trick", _t > 7.3 and _t < 10.0)
+	_stats["sling"] = _mark
 
 
 func _place(pos: Vector3, facing: Vector3) -> void:

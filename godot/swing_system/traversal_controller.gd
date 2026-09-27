@@ -23,6 +23,12 @@ extends CharacterBody3D
 ## Picada (dive): en el aire, picada; corriendo por una pared hacia una esquina,
 ## web a la esquina para girarla sin perder velocidad.
 ## Truco (trick) + dirección: voltereta adelante/atrás, tirabuzón izq./der. o giro.
+## Web Wings (glide) en el aire: planeo; stick adelante pica, atrás encabrita, a los
+## lados alabea. Abrirlas en picada da un impulso. Túneles de viento y corrientes
+## ascendentes (WindField) aceleran y elevan.
+## Super Slingshot: mantener point_zip y pulsar salto tensa dos webs por delante;
+## soltar el salto lanza. Truco mantenido en un swing rápido recoge cuerda y el arco
+## da la vuelta completa (loop de loop).
 
 signal state_changed(previous: int, current: int)
 signal web_fired(hand: int, anchor: Vector3)
@@ -34,8 +40,12 @@ signal trick_started()
 signal jumped(charge: float)
 signal quick_recovered()
 signal corner_turned(launched: bool)
+signal looped(count: int)
+signal wings_opened(boosted: bool)
+signal wings_closed()
+signal slingshot_launched(charge: float)
 
-enum State { GROUNDED, FALL, DIVE, SWING, WEB_ZIP, POINT_ZIP, PERCH, WALL_RUN }
+enum State { GROUNDED, FALL, DIVE, SWING, WEB_ZIP, POINT_ZIP, PERCH, WALL_RUN, GLIDE, SLINGSHOT }
 enum Trick { SPIN, FRONT_FLIP, BACK_FLIP, ROLL_LEFT, ROLL_RIGHT }
 
 const HAND_LEFT := -1
@@ -45,6 +55,8 @@ const TRICK_TIME := 0.6
 
 @export var tuning: SwingTuning
 @export var anchor_finder: AnchorFinder
+## Corrientes de aire para el planeo (túneles y columnas ascendentes). Opcional.
+var wind_field: WindField
 @export var camera: Camera3D
 ## Origen de la web respecto al centro del cuerpo (aprox. la mano en pose de disparo).
 @export var hand_offset := Vector3(0.0, 0.8, 0.0)
@@ -66,6 +78,12 @@ var jump_charge := 0.0            ## 0..1 mientras se carga el Charge Jump
 var land_kind := ""               ## "soft" | "roll" | "hero"
 var land_timer := 0.0
 var sprinting := false
+var wings: WebWings
+var in_tunnel := 0.0              ## 0..1 dentro de un túnel de viento (planeo)
+var in_updraft := 0.0             ## 0..1 dentro de una corriente ascendente
+var slingshot_charge := 0.0       ## 0..1 tensando el Super Slingshot
+var slingshot_aim := Vector3.FORWARD
+var slingshot_anchors: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## [izquierda, derecha]
 var move_input := Vector2.ZERO
 var cam_forward := Vector3.FORWARD
 var cam_right := Vector3.RIGHT
@@ -83,6 +101,10 @@ var _charging := false
 var _wall_run_speed := 0.0
 var _web_pull_timer := 0.0
 var _wall_cooldown := 0.0         ## tras dejar una pared, no volver a pegarse al instante
+var _last_loops := 0
+var _sling_origin := Vector3.ZERO
+var _sling_prev_state: State = State.GROUNDED
+var _pz_hold := -1.0              ## en el suelo: point_zip mantenido (¿zip o slingshot?)
 var _probe_shape := SphereShape3D.new()
 
 
@@ -90,6 +112,7 @@ func _ready() -> void:
 	if tuning == null:
 		tuning = SwingTuning.new()
 	pendulum = RegulatedPendulum.new(tuning)
+	wings = WebWings.new(tuning)
 	_probe_shape.radius = probe_radius
 	if anchor_finder:
 		if anchor_finder.tuning == null:
@@ -137,6 +160,10 @@ func update_swinging_system(delta: float) -> void:
 			_update_perch()
 		State.WALL_RUN:
 			_update_wall(delta)
+		State.GLIDE:
+			_update_glide(delta)
+		State.SLINGSHOT:
+			_update_slingshot(delta)
 
 
 func _read_input() -> void:
@@ -165,7 +192,12 @@ func _update_travel_dir(delta: float) -> void:
 		target = flat_v.normalized()
 	else:
 		return
-	travel_dir = travel_dir.slerp(target, 1.0 - exp(-4.0 * delta)).normalized()
+	# Giro en el plano horizontal (slerp de Vector3 pierde precisión con vectores casi
+	# paralelos y falla con opuestos).
+	var ang := travel_dir.signed_angle_to(target, Vector3.UP)
+	travel_dir = RegulatedPendulum.safe_normalized(
+			RegulatedPendulum.flat(travel_dir.rotated(Vector3.UP, ang * (1.0 - exp(-4.0 * delta)))),
+			target)
 
 
 func _set_state(next: State) -> void:
@@ -180,6 +212,10 @@ func _set_state(next: State) -> void:
 		_charging = false
 		jump_charge = 0.0
 		sprinting = false
+	if prev == State.GLIDE and next != State.GLIDE:
+		in_tunnel = 0.0
+		in_updraft = 0.0
+		wings_closed.emit()
 	state_changed.emit(prev, next)
 
 
@@ -205,6 +241,8 @@ func _update_grounded(delta: float) -> void:
 				+ Vector3.UP * tuning.quick_recovery_up
 		quick_recovered.emit()
 		_set_state(State.FALL)
+		return
+	if _ground_point_zip_or_slingshot(delta):
 		return
 	# Charge Jump: mantener salto carga, soltar salta (un toque = salto normal).
 	if Input.is_action_just_pressed("jump"):
@@ -260,6 +298,9 @@ func _update_air(delta: float) -> void:
 		_set_state(State.DIVE)
 	elif dive and not Input.is_action_pressed("dive"):
 		_set_state(State.FALL)
+	if Input.is_action_just_pressed("glide"):
+		_start_glide(dive or velocity.y < -25.0)     # abrirlas cayendo rápido = impulso
+		return
 	# Salto en el aire = Web Zip (como X en el original); también su botón propio.
 	var zip_pressed := Input.is_action_just_pressed("web_zip") or _jump_buffer > 0.0
 	if zip_pressed and _zip_cooldown <= 0.0:
@@ -322,6 +363,7 @@ func _try_attach() -> bool:
 		return false
 	pendulum.attach(global_position, velocity, cand.point, travel_dir, cand.ground_y,
 			anchor_finder.cruise_y())
+	_last_loops = 0
 	_predict_timer = 0.0
 	_avoid = Vector3.ZERO
 	_set_state(State.SWING)
@@ -337,10 +379,14 @@ func _update_swing(delta: float) -> void:
 
 	var hold := Input.is_action_pressed("swing")
 	var reel := -move_input.y            # W = subir por la telaraña (solo colgado)
+	var tighten := Input.is_action_pressed("trick")   # cerrar el arco -> loop
 	var steps := maxi(1, ceili(delta / tuning.substep))
 	var h := delta / steps
 	for i in steps:
-		pendulum.step(h, move_input.x, cam_right, hold, _avoid, reel)
+		pendulum.step(h, move_input.x, cam_right, hold, _avoid, reel, tighten)
+	if pendulum.loops > _last_loops:
+		_last_loops = pendulum.loops
+		looped.emit(_last_loops)
 
 	# El solver propone; move_and_slide dispone (colisiones reales del mundo).
 	velocity = (pendulum.pos - global_position) / delta
@@ -354,7 +400,10 @@ func _update_swing(delta: float) -> void:
 	velocity = pendulum.vel
 
 	# Sin suelta automática: solo el jugador (o chocar/aterrizar) suelta la telaraña.
-	if _jump_buffer > 0.0:
+	if Input.is_action_just_pressed("glide"):
+		_release(false)
+		_start_glide(false)
+	elif _jump_buffer > 0.0:
 		_jump_buffer = 0.0
 		_release(true)
 	elif not hold:
@@ -463,6 +512,10 @@ func _update_zip(delta: float) -> void:
 	move_and_slide()
 	if _try_wall_contact():
 		return
+	if Input.is_action_just_pressed("glide"):
+		web_released.emit(HAND_BOTH, false)
+		_start_glide(false)
+		return
 	if state_time >= tuning.zip_duration:
 		web_released.emit(HAND_BOTH, false)
 		_set_state(State.FALL)
@@ -499,6 +552,10 @@ func _update_point_zip(delta: float) -> void:
 
 func _update_perch() -> void:
 	velocity = Vector3.ZERO
+	if Input.is_action_pressed("point_zip") and Input.is_action_just_pressed("jump"):
+		_jump_buffer = 0.0
+		_start_slingshot()
+		return
 	# El buffer de salto (0.15 s) cuenta pulsaciones hechas justo antes de llegar.
 	if _jump_buffer > 0.0:
 		_jump_buffer = 0.0
@@ -610,6 +667,10 @@ func _update_wall(delta: float) -> void:
 	move_and_slide()
 	_check_inner_corner()
 
+	if wall_crawl and Input.is_action_pressed("point_zip") and Input.is_action_just_pressed("jump"):
+		_jump_buffer = 0.0
+		_start_slingshot()
+		return
 	if _jump_buffer > 0.0:
 		_jump_buffer = 0.0
 		if not wall_crawl and wall_vertical:
@@ -686,3 +747,125 @@ func _check_inner_corner() -> void:
 			if not wall_crawl and not wall_vertical:
 				velocity = old * _wall_run_speed + Vector3.UP * velocity.y
 			return
+
+
+# ---------------------------------------------------------------------------
+# Web Wings: planeo con túneles de viento y corrientes ascendentes
+# ---------------------------------------------------------------------------
+func _start_glide(from_dive: bool) -> void:
+	wings.open(velocity, from_dive)
+	_set_state(State.GLIDE)
+	wings_opened.emit(wings.boosted)
+
+
+func _update_glide(delta: float) -> void:
+	var tdir := Vector3.ZERO
+	var toff := Vector3.ZERO
+	in_tunnel = 0.0
+	in_updraft = 0.0
+	if wind_field:
+		wind_field.sample(global_position)
+		tdir = wind_field.tunnel_dir
+		toff = wind_field.tunnel_offset
+		in_tunnel = wind_field.tunnel
+		in_updraft = wind_field.updraft
+	# Stick adelante (move_forward, y < 0) = picar, como en el original.
+	velocity = wings.step(delta, -move_input.y, move_input.x, tdir, in_tunnel, in_updraft, toff)
+	move_and_slide()
+
+	if is_on_floor():
+		_land()
+		return
+	for i in get_slide_collision_count():
+		var n := get_slide_collision(i).get_normal()
+		if absf(n.y) <= 0.3 and _wall_cooldown <= 0.0 and _enter_wall(n, velocity, false):
+			return
+	if get_slide_collision_count() > 0:
+		# Roce: la velocidad real manda (sin perder el estado de las alas).
+		var real := get_real_velocity()
+		wings.speed = maxf(real.length(), 2.0)
+
+	# El mismo botón cierra las alas (no en los primeros instantes: evita que la
+	# misma pulsación que las abrió las cierre).
+	if Input.is_action_just_pressed("glide") and state_time > 0.15:
+		_set_state(State.FALL)
+	elif Input.is_action_just_pressed("dive"):
+		_set_state(State.DIVE)
+	elif Input.is_action_just_pressed("swing"):
+		_try_attach()                    # si no hay anclaje, sigue planeando
+	elif _jump_buffer > 0.0 and _zip_cooldown <= 0.0:
+		_jump_buffer = 0.0
+		_start_zip()
+	elif Input.is_action_just_pressed("point_zip"):
+		_start_point_zip()
+
+
+# ---------------------------------------------------------------------------
+# Super Slingshot: dos webs por delante, tensar hacia atrás y salir disparado
+# ---------------------------------------------------------------------------
+## En el suelo, point_zip mantenido + salto = slingshot; un toque corto = point zip.
+func _ground_point_zip_or_slingshot(delta: float) -> bool:
+	if Input.is_action_just_pressed("point_zip"):
+		_pz_hold = 0.0
+	if _pz_hold < 0.0:
+		return false
+	if Input.is_action_pressed("point_zip"):
+		_pz_hold += delta
+		if Input.is_action_just_pressed("jump"):
+			_pz_hold = -1.0
+			_jump_buffer = 0.0
+			_start_slingshot()
+			return true
+		return false
+	var was_tap := _pz_hold < 0.3
+	_pz_hold = -1.0
+	return was_tap and _start_point_zip()
+
+
+func _start_slingshot() -> void:
+	var aim := RegulatedPendulum.safe_normalized(cam_forward, travel_dir)
+	if state == State.WALL_RUN:
+		# Desde la pared: siempre hacia fuera de la fachada.
+		var n := RegulatedPendulum.flat(wall_normal)
+		aim = RegulatedPendulum.safe_normalized(aim - n * minf(aim.dot(n), 0.0) + n * 0.6, n)
+	var right := aim.cross(Vector3.UP).normalized()
+	var space := get_world_3d().direct_space_state
+	var from := global_position + hand_offset
+	var anchors: Array[Vector3] = []
+	for side: float in [-1.0, 1.0]:
+		var dir := (aim * cos(deg_to_rad(35.0)) + right * side * sin(deg_to_rad(35.0)) \
+				+ Vector3.UP * 0.35).normalized()
+		var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+				from, from + dir * 40.0, collision_mask, [get_rid()]))
+		if hit.is_empty():
+			# Sin fachada delante: la web se clava en el suelo por delante (nunca en el aire).
+			var ahead := from + dir * 12.0
+			hit = space.intersect_ray(PhysicsRayQueryParameters3D.create(
+					ahead, ahead + Vector3.DOWN * 60.0, collision_mask, [get_rid()]))
+		anchors.append(hit.position if not hit.is_empty() else from + dir * 12.0)
+	slingshot_aim = aim
+	slingshot_anchors = anchors
+	slingshot_charge = 0.0
+	_sling_origin = global_position
+	_sling_prev_state = state if state != State.WALL_RUN else State.GROUNDED
+	_set_state(State.SLINGSHOT)
+	web_fired.emit(HAND_LEFT, anchors[0])
+	web_fired.emit(HAND_RIGHT, anchors[1])
+
+
+func _update_slingshot(delta: float) -> void:
+	slingshot_charge = minf(slingshot_charge + delta / tuning.slingshot_charge_time, 1.0)
+	# Se echa hacia atrás tensando las webs (en horizontal: no cae de la cornisa).
+	var back := _sling_origin - slingshot_aim * tuning.slingshot_pull_back * sin(slingshot_charge * PI * 0.5)
+	velocity = RegulatedPendulum.flat(back - global_position) / delta * 0.25
+	move_and_slide()
+	if not Input.is_action_pressed("jump"):
+		var c := slingshot_charge
+		var dir := (slingshot_aim + Vector3.UP * tuning.slingshot_lift).normalized()
+		velocity = dir * lerpf(tuning.slingshot_min_speed, tuning.slingshot_max_speed, c * c)
+		web_released.emit(HAND_BOTH, false)
+		slingshot_launched.emit(c)
+		_set_state(State.FALL)
+	elif not Input.is_action_pressed("point_zip"):
+		web_released.emit(HAND_BOTH, false)          # cancelado
+		_set_state(_sling_prev_state)

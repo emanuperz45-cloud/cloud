@@ -30,11 +30,15 @@ func _ready() -> void:
 	add_child(city)
 	city.build(CITY_SEED)
 	_build_player()
+	player.wind_field = city.wind_field
 	camera_rig = CameraRig.new()
 	camera_rig.target = player
 	add_child(camera_rig)
 	player.camera = camera_rig.camera          # el input direccional es relativo a la cámara
 	_bounds = city.blocks * city.pitch + 150.0
+	var fx := DemoFx.new()
+	fx.controller = player
+	add_child(fx)
 	hud = DemoHud.new()
 	hud.controller = player
 	hud.camera_rig = camera_rig
@@ -133,7 +137,7 @@ func _build_player() -> void:
 	web_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 	web_mat.cull_mode = BaseMaterial3D.CULL_DISABLED
 	var webs: Array[WebLine] = []
-	for i in 2:
+	for i in 4:
 		var web := WebLine.new()
 		web.material = web_mat
 		add_child(web)
@@ -144,6 +148,7 @@ func _build_player() -> void:
 	animator.visual_root = visual
 	animator.web_line = webs[0]
 	animator.web_line_alt = webs[1]
+	animator.extra_web_lines = [webs[2], webs[3]]
 	animator.hand_socket_left = body.hand_socket_left
 	animator.hand_socket_right = body.hand_socket_right
 	player.add_child(animator)

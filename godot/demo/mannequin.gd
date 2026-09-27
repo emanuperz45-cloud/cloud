@@ -10,11 +10,16 @@ extends Node3D
 ##  - pared: carrera (pies en la pared) o gateo (pegado a la fachada);
 ##  - suelo: carrera/sprint, agachado al cargar el salto, aterrizaje de superhéroe,
 ##    rodada;
-##  - acrobacias: volteretas y tirabuzones en sueltas, trucos, Quick Recovery, esquinas.
+##  - acrobacias: volteretas y tirabuzones en sueltas, trucos, Quick Recovery, esquinas;
+##  - Web Wings: brazos y piernas abiertos, membranas muñeca-hombro-cadera que se
+##    despliegan, alabeo y cabeceo según el stick; Super Slingshot: tensado hacia atrás.
+## Las articulaciones siguen la pose con muelles amortiguados (ζ < 1): los brazos y
+## las piernas llegan con un pequeño rebote, que da peso a los cambios de pose.
 ## El frente del modelo es +Z y su derecha -X. Se actualiza en _physics_process
 ## para que la physics interpolation lo suavice.
 
 const SUIT := preload("res://demo/suit.gdshader")
+const WING := preload("res://demo/wing.gdshader")
 const REFERENCE := preload("res://demo/textures/suit_reference.webp")
 const WHITE := Color(0.96, 0.97, 1.0)
 const BLACK := Color(0.02, 0.02, 0.025)
@@ -33,6 +38,11 @@ var _flip_t := 1.0
 var _flip_axis := Vector3.RIGHT
 var _flip_turns := 1.0
 var _flip_time := 0.5
+var _joint_vel := {}
+var _wings_open := 0.0
+var _wing_mesh := ImmediateMesh.new()
+var _wing_mat := ShaderMaterial.new()
+var _loop_spin := 0.0
 
 
 func _ready() -> void:
@@ -47,6 +57,18 @@ func _ready() -> void:
 	controller.point_launched.connect(func(perfect: bool) -> void:
 		if perfect:
 			_start_flip(Vector3.RIGHT, 1.0, 0.6))
+	controller.slingshot_launched.connect(func(c: float) -> void:
+		if c > 0.6:
+			_start_flip(Vector3.RIGHT, 1.0 if c < 0.95 else 2.0, 0.5 + c * 0.35))
+	controller.wings_opened.connect(func(boosted: bool) -> void:
+		if boosted:
+			_start_flip(Vector3.UP, 1.0, 0.4))
+	_wing_mat.shader = WING
+	var wings := MeshInstance3D.new()
+	wings.name = "WebWings"
+	wings.mesh = _wing_mesh
+	wings.material_override = _wing_mat
+	add_child(wings)
 
 
 # ---------------------------------------------------------------------------
@@ -310,6 +332,39 @@ func _pose_zip(pose: Dictionary) -> void:
 	pose["head"] = _q(-10.0)
 
 
+func _pose_glide(pose: Dictionary) -> void:
+	var c := controller
+	var pitch_in := -c.move_input.y            # +1 picar, -1 encabritar (flare)
+	var bank := c.wings.bank / deg_to_rad(c.tuning.glide_max_bank_deg)
+	var dive := maxf(pitch_in, 0.0)
+	var flare := maxf(-pitch_in, 0.0)
+	var buffet := sin(_time * 23.0) * clampf(c.wings.speed / 45.0, 0.0, 1.0) * 2.5
+	if c.wings.stalled:
+		buffet += sin(_time * 11.0) * 8.0
+	for side in [1, -1]:
+		# Alabeo: el ala del lado del giro baja (hacia el pecho) y la otra sube.
+		var roll := bank * float(side) * 22.0
+		var out := lerpf(88.0, 58.0, dive) + flare * 18.0 + buffet * float(side)
+		_arm(pose, side, -6.0 + roll + flare * 18.0, out, 6.0 + dive * 14.0)
+		_leg(pose, side, -4.0 - flare * 10.0 + roll * 0.4, 9.0 + flare * 6.0 - dive * 5.0,
+				8.0 + flare * 30.0)
+	pose["spine"] = _q(-10.0 - flare * 8.0 + dive * 4.0)
+	pose["head"] = _q(-42.0 + dive * 12.0)
+
+
+func _pose_slingshot(pose: Dictionary) -> void:
+	var ch := controller.slingshot_charge
+	var shake := sin(_time * 40.0) * ch * ch * 3.0
+	# Cada mano agarra su web (hacia su anclaje); el cuerpo se sienta hacia atrás.
+	for side in [1, -1]:
+		var anchor: Vector3 = controller.slingshot_anchors[1 if side > 0 else 0]
+		pose["sh_" + _s(side)] = _aim_arm(side, anchor)
+		pose["el_" + _s(side)] = _q(-lerpf(30.0, 8.0, ch) + shake)
+		_leg(pose, side, lerpf(55.0, 95.0, ch), 14.0, lerpf(75.0, 125.0, ch))
+	pose["spine"] = _q(lerpf(5.0, -22.0, ch))
+	pose["head"] = _q(lerpf(-10.0, 12.0, ch))
+
+
 func _pose_crouch(pose: Dictionary, amount: float) -> void:
 	_arm(pose, 1, lerpf(5.0, -35.0, amount), 15.0, lerpf(12.0, 40.0, amount))
 	_arm(pose, -1, lerpf(5.0, -35.0, amount), 15.0, lerpf(12.0, 40.0, amount))
@@ -423,6 +478,13 @@ func _physics_process(delta: float) -> void:
 			rate = 24.0
 		TraversalController.State.DIVE:
 			_pose_dive(pose)
+		TraversalController.State.GLIDE:
+			_pose_glide(pose)
+			rate = 12.0
+		TraversalController.State.SLINGSHOT:
+			_pose_slingshot(pose)
+			crouch = 0.1 + controller.slingshot_charge * 0.35
+			rate = 20.0
 		TraversalController.State.WEB_ZIP, TraversalController.State.POINT_ZIP:
 			_pose_zip(pose)
 		TraversalController.State.PERCH:
@@ -453,8 +515,7 @@ func _physics_process(delta: float) -> void:
 
 	var k := 1.0 - exp(-rate * delta)
 	for key: String in pose:
-		var node: Node3D = _joints[key]
-		node.quaternion = node.quaternion.slerp(pose[key], k)
+		_spring_joint(key, pose[key], rate, delta)
 
 	# Pelvis: inclinación al girar + acrobacias (voltereta / tirabuzón / giro).
 	var steer := c.move_input.x if c.state == TraversalController.State.SWING else 0.0
@@ -463,5 +524,80 @@ func _physics_process(delta: float) -> void:
 	if _flip_t < 1.0:
 		_flip_t = minf(_flip_t + delta / _flip_time, 1.0)
 		acro = Quaternion(_flip_axis, TAU * _flip_turns * smoothstep(0.0, 1.0, _flip_t))
+	# Loop de loop: el cuerpo da la vuelta completa con la web (ya lo orienta el
+	# animador); aquí solo se añade el giro del tronco durante la vuelta.
 	_pelvis.quaternion = acro * Quaternion(Vector3.BACK, _lean)
 	_pelvis.position.y = lerpf(_pelvis.position.y, -crouch, k)
+	_update_wings(delta)
+
+
+## Muelle amortiguado por articulación (semi-implícito): ω = rate, ζ < 1 en las
+## extremidades para que lleguen con algo de rebote (overlap), ζ ≈ 1 en el tronco.
+func _spring_joint(key: String, target: Quaternion, rate: float, delta: float) -> void:
+	var node: Node3D = _joints[key]
+	var cur := node.quaternion
+	var dq := target * cur.inverse()
+	if dq.w < 0.0:
+		dq = -dq
+	var s := sqrt(maxf(1.0 - dq.w * dq.w, 0.0))
+	var axis_angle := Vector3(dq.x, dq.y, dq.z) * 2.0
+	if s > 1e-4:
+		axis_angle = Vector3(dq.x, dq.y, dq.z) / s * (2.0 * acos(clampf(dq.w, -1.0, 1.0)))
+	var zeta := 0.9 if key in ["spine", "head", "pelvis"] else 0.62
+	var omega := rate * 1.1
+	var w: Vector3 = _joint_vel.get(key, Vector3.ZERO)
+	w += (axis_angle * omega * omega - w * 2.0 * zeta * omega) * delta
+	w = w.limit_length(40.0)
+	_joint_vel[key] = w
+	var ang := w.length() * delta
+	if ang > 1e-6:
+		node.quaternion = (Quaternion(w / w.length(), ang) * cur).normalized()
+
+
+# ---------------------------------------------------------------------------
+# Membranas de las Web Wings (muñeca - codo - hombro - cadera)
+# ---------------------------------------------------------------------------
+func _update_wings(delta: float) -> void:
+	var gliding := controller.state == TraversalController.State.GLIDE
+	_wings_open = move_toward(_wings_open, 1.0 if gliding else 0.0, delta * (4.0 if gliding else 7.0))
+	_wing_mesh.clear_surfaces()
+	if _wings_open < 0.02:
+		return
+	var open := smoothstep(0.0, 1.0, _wings_open)
+	var back := Vector3.BACK * -1.0            # la espalda (-Z local) mira al cielo al planear
+	var flutter := sin(_time * 31.0) * 0.012 * clampf(controller.velocity.length() / 40.0, 0.0, 1.0)
+	_wing_mesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
+	for side in [1, -1]:
+		var s := _s(side)
+		var sh := to_local((_joints["sh_" + s] as Node3D).global_position)
+		var el := to_local((_joints["el_" + s] as Node3D).global_position)
+		var wr := to_local((hand_socket_right if side > 0 else hand_socket_left).global_position)
+		var hip := to_local((_joints["hip_" + s] as Node3D).global_position)
+		var knee := to_local((_joints["kn_" + s] as Node3D).global_position)
+		var tail := hip.lerp(knee, 0.35)
+		const NU := 6
+		const NV := 4
+		var grid: Array[PackedVector3Array] = []
+		for i in NU + 1:
+			var u := float(i) / NU
+			var lead := sh.lerp(el, u * 2.0) if u < 0.5 else el.lerp(wr, u * 2.0 - 1.0)
+			var trail := tail.lerp(wr, pow(u, 0.85))
+			trail = trail.lerp(lead, 0.16 * sin(u * PI))          # borde festoneado
+			trail = lead.lerp(trail, open)                        # despliegue
+			var row := PackedVector3Array()
+			for j in NV + 1:
+				var v := float(j) / NV
+				var billow := sin(u * PI) * sin(v * PI) * (0.07 + flutter) * open
+				row.append(lead.lerp(trail, v) + back * billow)
+			grid.append(row)
+		for i in NU:
+			for j in NV:
+				var quad := [Vector2i(i, j), Vector2i(i + 1, j), Vector2i(i + 1, j + 1), Vector2i(i, j + 1)]
+				for idx in [0, 1, 2, 0, 2, 3]:
+					var q: Vector2i = quad[idx]
+					var n := (grid[mini(q.x + 1, NU)][q.y] - grid[maxi(q.x - 1, 0)][q.y]).cross(
+							grid[q.x][mini(q.y + 1, NV)] - grid[q.x][maxi(q.y - 1, 0)]).normalized()
+					_wing_mesh.surface_set_normal(n * float(side))
+					_wing_mesh.surface_set_uv(Vector2(float(q.x) / NU, float(q.y) / NV))
+					_wing_mesh.surface_add_vertex(grid[q.x][q.y])
+	_wing_mesh.surface_end()

@@ -5,6 +5,7 @@ extends CanvasLayer
 
 const STATE_NAMES := [
 	"SUELO", "CAÍDA", "PICADA", "BALANCEO", "WEB ZIP", "POINT ZIP", "POSADO", "WALL RUN",
+	"PLANEO", "SLINGSHOT",
 ]
 const HELP := """\
 CLIC IZQ / R2 mantenido: balanceo en la misma telaraña (si no sueltas, te quedas colgado)
@@ -14,8 +15,12 @@ ESPACIO / A: en el balanceo salta (abajo = adelante, al final = arriba) · en el
 SUELO: clic mantenido = sprint (contra una fachada sube corriendo) · salta con clic = telaraña
 PARED: con clic corres, sin clic trepas · ESPACIO tira hacia arriba o salta de la pared
 MAYÚS / B: picada · en una esquina corriendo, gira la esquina con una telaraña
+G, CTRL, RUEDA / Y en el aire: WEB WINGS · W picar, S subir, A/D alabear
+   ábrelas en picada = impulso · anillos azules = túnel de viento · columnas = corriente
 Q, CLIC DER / L2: point zip al punto amarillo, ESPACIO al llegar = Point Launch
-F / Y + dirección: trucos · R: reaparecer · ESC: ratón · H: ocultar ayuda"""
+   Q + ESPACIO mantenidos (suelo, posado, pared): SUPER SLINGSHOT, suelta ESPACIO
+F / LB + dirección: trucos · mantenido en un balanceo rápido: LOOP
+R: reaparecer · ESC: ratón · H: ocultar ayuda"""
 
 var controller: TraversalController
 var camera_rig: CameraRig
@@ -29,6 +34,7 @@ var _perch: Variant = null
 
 
 func _ready() -> void:
+	layer = 2
 	_stats = _label(22, Vector2(24, 20))
 	_banner = _label(40, Vector2.ZERO)
 	_banner.anchor_right = 1.0
@@ -38,7 +44,7 @@ func _ready() -> void:
 	_help.anchor_top = 1.0
 	_help.anchor_bottom = 1.0
 	_help.offset_left = 24.0
-	_help.offset_top = -320.0
+	_help.offset_top = -400.0
 	_help.offset_bottom = -16.0
 	_help.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	_help.text = HELP
@@ -54,6 +60,13 @@ func _ready() -> void:
 	controller.point_launched.connect(func(perfect: bool) -> void:
 		if perfect:
 			_show_banner("¡POINT LAUNCH PERFECTO!"))
+	controller.looped.connect(func(n: int) -> void:
+		_show_banner("¡LOOP!" if n == 1 else "¡LOOP x%d!" % n))
+	controller.wings_opened.connect(func(boosted: bool) -> void:
+		if boosted:
+			_show_banner("¡WEB WINGS AL LÍMITE!"))
+	controller.slingshot_launched.connect(func(c: float) -> void:
+		_show_banner("SUPER SLINGSHOT" if c < 0.95 else "¡SUPER SLINGSHOT MÁXIMO!"))
 
 
 func set_help_visible(v: bool) -> void:
@@ -95,7 +108,7 @@ func _process(delta: float) -> void:
 	_perch = null
 	if c.anchor_finder and c.state in [TraversalController.State.FALL, TraversalController.State.DIVE,
 			TraversalController.State.GROUNDED, TraversalController.State.WALL_RUN,
-			TraversalController.State.SWING]:
+			TraversalController.State.SWING, TraversalController.State.GLIDE]:
 		var aim := -camera_rig.camera.global_transform.basis.z
 		_perch = c.anchor_finder.find_perch(c.global_position, aim, 45.0)
 	_reticle.queue_redraw()
@@ -110,6 +123,15 @@ func _state_name() -> String:
 		TraversalController.State.WALL_RUN:
 			if c.wall_crawl:
 				return "TREPANDO"
+		TraversalController.State.GLIDE:
+			if c.wings.stalled:
+				return "PLANEO · PÉRDIDA"
+			if c.in_tunnel > 0.3:
+				return "PLANEO · TÚNEL"
+			if c.in_updraft > 0.3:
+				return "PLANEO · CORRIENTE"
+		TraversalController.State.SLINGSHOT:
+			return "SLINGSHOT %d%%" % int(c.slingshot_charge * 100.0)
 		TraversalController.State.GROUNDED:
 			if c.jump_charge > 0.0:
 				return "CARGANDO SALTO %d%%" % int(c.jump_charge * 100.0)

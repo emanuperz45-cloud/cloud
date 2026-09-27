@@ -165,6 +165,8 @@ class SwingTuning:
     hang_wall_offset: float = 1.0         # m de separación de la fachada al colgar
     reel_climb_speed: float = 5.0         # m/s subiendo/bajando por la telaraña
     hang_min_length: float = 4.0
+    loop_radius_factor: float = 0.8       # tighten: L = factor · v²/(5·g_subida) (cabe el loop)
+    loop_min_speed: float = 20.0          # por debajo, tighten no recoge cuerda
 
     # Caída libre / picada
     fall_drag: float = 0.011              # v_term = sqrt(g_fall / k) ~ 40 m/s
@@ -180,6 +182,29 @@ class SwingTuning:
     point_launch_forward: float = 18.0
     point_launch_up: float = 19.0
     point_launch_perfect_mult: float = 1.25
+
+    # Web Wings (planeo). Modelo de ángulo de trayectoria: la velocidad sobre el
+    # aire cambia con -g·sin(γ) - k·V², el morro sigue al stick y el alabeo gira.
+    glide_gravity: float = 9.81
+    glide_drag: float = 0.0028            # V_term planeo neutro ~21 m/s, picado ~52 m/s
+    glide_neutral_deg: float = -7.0       # sin input: planeo suave (fineza ~8:1)
+    glide_dive_deg: float = -50.0         # stick adelante
+    glide_climb_deg: float = 22.0         # stick atrás (encabritar)
+    glide_pitch_rate: float = 1.6         # rad/s de cambio de trayectoria a 20 m/s
+    glide_max_bank_deg: float = 50.0
+    glide_bank_rate: float = 4.0          # 1/s
+    glide_stall_speed: float = 9.0        # por debajo el morro cae solo
+    glide_flare_drag: float = 0.8         # resistencia extra al encabritar
+    glide_open_min_speed: float = 14.0
+    glide_dive_boost: float = 8.0         # abrir las alas en picada (> 30 m/s)
+    glide_tunnel_accel: float = 26.0      # m/s² dentro de un túnel de viento alineado
+    glide_tunnel_align: float = 1.5       # 1/s, asistencia hacia el eje del túnel
+    glide_tunnel_speed: float = 46.0      # el empuje se anula a esta velocidad (~38 m/s de crucero)
+    glide_tunnel_authority: float = 0.8   # dentro del túnel el viento manda sobre el cabeceo
+    glide_tunnel_center: float = 1.2      # 1/s, deriva hacia el eje del túnel
+    glide_updraft_speed: float = 16.0     # m/s hacia arriba en una corriente ascendente
+    glide_updraft_accel: float = 30.0     # m/s² con que se llega a esa velocidad
+    glide_updraft_decay: float = 1.2      # s: el impulso dura un poco al salir de la columna
 
     # Búsqueda de anclajes (offsets del punto ideal, en marco local de viaje)
     anchor_ideal_forward: float = 18.0
@@ -202,6 +227,7 @@ class SwingInput:
     hold: bool = True               # gatillo de balanceo mantenido
     external_accel: V3 | None = None  # asistencias del motor (evitación de colisiones)
     reel: float = 0.0               # colgado: +1 sube por la telaraña, -1 baja
+    tighten: bool = False           # recoger cuerda hasta el radio de loop (arco rápido)
 
 
 @dataclass
@@ -241,7 +267,9 @@ class RegulatedPendulum:
         self.sample = SwingSample()
         self.sustain = False          # tras la 1.ª inversión: arco amortiguado / colgado
         self.hang_pivot = V3()
-        self._prev_ang = 0.0
+        self.swing_axis = V3()        # eje de giro del arco al enganchar
+        self.orbit = 0.0              # rad recorridos alrededor del pivote
+        self.loops = 0                # vueltas completas (loop de loop)
 
     # -- helpers ----------------------------------------------------------
     def rope_dir(self) -> V3:
@@ -319,7 +347,9 @@ class RegulatedPendulum:
             v_t = v_t + tan_fwd * (t.attach_min_tangent_speed - along)
         self.vel = v_t
         self.sample = SwingSample(rope_length=self.length, speed=v_t.length())
-        self._prev_ang = self.signed_angle_deg()
+        self.swing_axis = self.rope_dir().cross(v_t).normalized()
+        self.orbit = 0.0
+        self.loops = 0
 
     def release(self, allow_perfect: bool = True) -> tuple[V3, bool]:
         """Devuelve (velocidad de salida, suelta perfecta). allow_perfect=False
@@ -349,12 +379,19 @@ class RegulatedPendulum:
         n = self.rope_dir()
         ang = self.signed_angle_deg()
 
-        # 0) Péndulo sostenido: la primera vez que el arco se invierte (subía y
-        # ahora baja) o si apenas hay velocidad, pasa a modo amortiguado.
-        if inp.hold and not self.sustain and ((self._prev_ang > 3.0 and ang < 0.0)
+        # 0) Velocidad angular alrededor del eje de giro inicial. Negativa = el
+        # arco se ha invertido. Cruzar la vertical por arriba NO es inversión:
+        # así un swing rápido puede dar la vuelta completa (loop de loop).
+        radius = max((self.pos - self.pivot).length(), 0.1)
+        w = n.cross(self.vel).dot(self.swing_axis) / radius
+        self.orbit += w * h
+        if self.orbit >= math.tau * (self.loops + 1):
+            self.loops += 1
+        # Péndulo sostenido: primera inversión, tras una vuelta completa o casi
+        # sin velocidad -> arco amortiguado hasta quedar colgado.
+        if inp.hold and not self.sustain and (w < -0.05 or self.loops >= 1
                                               or (self.time > 0.5 and self.vel.length() < 1.0)):
             self.sustain = True
-        self._prev_ang = ang
 
         # 1) Gravedad asimétrica (simétrica al colgar: la asimetría bombea energía)
         g_scale = t.gravity_scale_swing_down if self.vel.y < 0.0 else t.gravity_scale_swing_up
@@ -404,6 +441,11 @@ class RegulatedPendulum:
             # Subir/bajar por la telaraña (W/S) mientras se está colgado.
             min_len = t.hang_min_length
             self.length -= inp.reel * t.reel_climb_speed * h
+        v_now = self.vel.length()
+        if inp.tighten and not self.sustain and v_now > t.loop_min_speed:
+            # Cerrar el arco: con la cuerda corta la energía alcanza para la vuelta.
+            g_up = t.g * t.gravity_scale_swing_up
+            max_len = min(max_len, t.loop_radius_factor * v_now * v_now / (5.0 * g_up))
         l_target = clamp(min(self.length, max_len), min_len, t.rope_max)
         self.length = move_toward(self.length, l_target, t.reel_speed * h)
         if self.length < l_target:
@@ -570,3 +612,98 @@ def score_anchor(c: AnchorCandidate, pos: V3, travel: V3, side: float,
     lat = rel.dot(right)
     s_side = 1.0 if lat * side > 0.0 else 0.4
     return 0.40 * s_dist + 0.25 * s_dir + 0.20 * s_height + 0.15 * s_side
+
+
+# ---------------------------------------------------------------------------
+# Web Wings: planeo
+# ---------------------------------------------------------------------------
+class Glider:
+    """
+    Planeo con modelo de ángulo de trayectoria (γ) y rumbo (ψ):
+      dV/dt = -g·sin γ - k·V²·(1 + flare)   (+ empuje del túnel de viento)
+      γ sigue al objetivo del stick a una tasa proporcional a V (sin velocidad no
+      hay autoridad: en pérdida el morro cae), ψ gira con viraje coordinado
+      dψ/dt = g·tan φ / V. Stick adelante = picar (como en el original).
+    """
+
+    def __init__(self, tuning: SwingTuning):
+        self.t = tuning
+        self.speed = 0.0
+        self.gamma = 0.0      # rad, + = subiendo
+        self.psi = 0.0        # rad, dirección (sin ψ, 0, cos ψ)
+        self.bank = 0.0       # rad, + = alabeo a la derecha
+        self.boosted = False
+        self.stalled = False
+        self.lift = 0.0       # m/s verticales de la corriente ascendente (con inercia)
+
+    def direction(self) -> V3:
+        c = math.cos(self.gamma)
+        return V3(c * math.sin(self.psi), math.sin(self.gamma), c * math.cos(self.psi))
+
+    def open(self, vel: V3, from_dive: bool = False) -> None:
+        t = self.t
+        v = vel.length()
+        horiz = vel.horizontal()
+        self.psi = math.atan2(horiz.x, horiz.z) if horiz.length() > 0.5 else self.psi
+        self.gamma = clamp(math.asin(clamp(vel.y / max(v, 1e-3), -1.0, 1.0)),
+                           math.radians(-60.0), math.radians(20.0))
+        self.speed = max(v, t.glide_open_min_speed)
+        self.boosted = from_dive and v > 30.0
+        if self.boosted:
+            self.speed += t.glide_dive_boost          # "Ultimate Wings"
+        self.bank = 0.0
+        self.stalled = False
+        self.lift = 0.0
+
+    def step(self, h: float, pitch_in: float, roll_in: float, tunnel_dir: V3 | None = None,
+             tunnel: float = 0.0, updraft: float = 0.0, tunnel_offset: V3 | None = None) -> V3:
+        """pitch_in: +1 picar / -1 encabritar. roll_in: +1 derecha. tunnel_offset: vector
+        de la posición al eje del túnel (perpendicular). Devuelve la velocidad."""
+        t = self.t
+        g = t.glide_gravity
+        if pitch_in >= 0.0:
+            target = math.radians(lerp(t.glide_neutral_deg, t.glide_dive_deg, pitch_in))
+        else:
+            target = math.radians(lerp(t.glide_neutral_deg, t.glide_climb_deg, -pitch_in))
+        in_tunnel = tunnel > 0.0 and tunnel_dir is not None
+        if in_tunnel:
+            target = lerp(target, math.asin(clamp(tunnel_dir.y, -1.0, 1.0)),
+                          tunnel * t.glide_tunnel_authority)
+        # Pérdida con histéresis: el morro cae hasta recuperar 5 m/s por encima.
+        if self.speed < t.glide_stall_speed:
+            self.stalled = True
+        elif self.speed > t.glide_stall_speed + 5.0:
+            self.stalled = False
+        if self.stalled:
+            target = min(target, math.radians(-35.0))
+        rate = t.glide_pitch_rate * clamp(self.speed / 20.0, 0.3, 1.3) * h
+        self.gamma += clamp(target - self.gamma, -rate, rate)
+
+        self.bank += (roll_in * math.radians(t.glide_max_bank_deg) - self.bank) \
+            * (1.0 - math.exp(-t.glide_bank_rate * h))
+        self.psi -= g * math.tan(self.bank) / max(self.speed, 8.0) * h
+
+        drift = V3()
+        if in_tunnel:
+            # Túnel de viento: empuje a lo largo del eje (se anula a glide_tunnel_speed),
+            # alineación del rumbo y deriva hacia el eje.
+            d = self.direction()
+            along = max(d.dot(tunnel_dir), 0.0)
+            fade = max(1.0 - self.speed / t.glide_tunnel_speed, 0.0)
+            self.speed += t.glide_tunnel_accel * tunnel * along * fade * h
+            if tunnel_offset is not None:
+                drift = tunnel_offset * (t.glide_tunnel_center * tunnel)
+            want_psi = math.atan2(tunnel_dir.x, tunnel_dir.z)
+            dpsi = (want_psi - self.psi + math.pi) % math.tau - math.pi
+            k = 1.0 - math.exp(-t.glide_tunnel_align * tunnel * h)
+            self.psi += dpsi * k
+            self.gamma += (math.asin(clamp(tunnel_dir.y, -1.0, 1.0)) - self.gamma) * k
+
+        drag = t.glide_drag * self.speed * self.speed * (1.0 + t.glide_flare_drag * max(-pitch_in, 0.0))
+        self.speed = max(self.speed + (-g * math.sin(self.gamma) - drag) * h, 2.0)
+        if updraft > 0.0:
+            self.lift = min(self.lift + t.glide_updraft_accel * updraft * h,
+                            max(self.lift, t.glide_updraft_speed * updraft))
+        else:
+            self.lift *= math.exp(-h / t.glide_updraft_decay)
+        return self.direction() * self.speed + UP * self.lift + drift

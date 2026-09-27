@@ -65,6 +65,9 @@ extends Resource
 @export var hang_wall_offset: float = 1.0
 @export var reel_climb_speed: float = 5.0
 @export var hang_min_length: float = 4.0
+## Loop: mantener truco en un arco rápido recoge cuerda hasta L = factor·v²/(5·g).
+@export var loop_radius_factor: float = 0.8
+@export var loop_min_speed: float = 20.0
 @export var reattach_delay: float = 0.15
 ## "Swing jump" (salto durante el swing): en el fondo del arco lanza hacia
 ## delante, al final del arco hacia arriba (como en el original).
@@ -91,6 +94,35 @@ extends Resource
 @export var point_launch_up: float = 19.0
 @export var point_launch_perfect_mult: float = 1.25
 @export var point_launch_window: float = 0.22
+
+@export_group("Web Wings (planeo)")
+@export var glide_gravity: float = 9.81
+@export var glide_drag: float = 0.0028
+@export var glide_neutral_deg: float = -7.0
+@export var glide_dive_deg: float = -50.0
+@export var glide_climb_deg: float = 22.0
+@export var glide_pitch_rate: float = 1.6
+@export var glide_max_bank_deg: float = 50.0
+@export var glide_bank_rate: float = 4.0
+@export var glide_stall_speed: float = 9.0
+@export var glide_flare_drag: float = 0.8
+@export var glide_open_min_speed: float = 14.0
+@export var glide_dive_boost: float = 8.0
+@export var glide_tunnel_accel: float = 26.0
+@export var glide_tunnel_align: float = 1.5
+@export var glide_tunnel_speed: float = 46.0       ## el empuje se anula a esta velocidad
+@export var glide_tunnel_authority: float = 0.8    ## en el túnel el viento manda sobre el cabeceo
+@export var glide_tunnel_center: float = 1.2       ## 1/s, deriva hacia el eje del túnel
+@export var glide_updraft_speed: float = 16.0
+@export var glide_updraft_accel: float = 30.0
+@export var glide_updraft_decay: float = 1.2       ## s de inercia del impulso al salir
+
+@export_group("Super Slingshot")
+@export var slingshot_charge_time: float = 1.2
+@export var slingshot_pull_back: float = 1.6
+@export var slingshot_min_speed: float = 20.0
+@export var slingshot_max_speed: float = 58.0
+@export var slingshot_lift: float = 1.0         ## componente vertical de la dirección (45°)
 
 @export_group("Anclajes")
 @export var anchor_ideal_forward: float = 18.0
