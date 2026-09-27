@@ -35,6 +35,7 @@ var pendulum: RegulatedPendulum
 var travel_dir := Vector3.FORWARD
 var hand := HAND_RIGHT
 var last_release_perfect := false
+var last_release_chained := false   ## suelta automática del swing encadenado
 var wall_normal := Vector3.ZERO
 var wall_vertical := false
 var trick_timer := 0.0
@@ -252,7 +253,7 @@ func _update_swing(delta: float) -> void:
 	elif Input.is_action_just_released("swing"):
 		_release(false)
 	elif hold and pendulum.swing_angle_deg >= tuning.chain_release_angle_deg:
-		_release(false)              # encadenado: suelta sola y re-dispara en FALL
+		_release(false, true)        # encadenado: suelta sola y re-dispara en FALL
 	elif pendulum.should_auto_release():
 		_release(false)
 	elif is_on_floor():
@@ -261,9 +262,10 @@ func _update_swing(delta: float) -> void:
 		_land()
 
 
-func _release(swing_jump: bool) -> void:
+func _release(swing_jump: bool, chained: bool = false) -> void:
 	var v := pendulum.release()
 	last_release_perfect = pendulum.last_release_perfect
+	last_release_chained = chained
 	if swing_jump:
 		var bonus := tuning.release_perfect_bonus if last_release_perfect else 0.0
 		v += Vector3.UP * tuning.swing_jump_up * (1.0 + bonus)

@@ -8,8 +8,8 @@ extends Node
 ##   Locomotion (StateMachine) -> GLoad (Add2) -> Lean (Add3) -> FireL (OneShot)
 ##   -> FireR (OneShot) -> Trick (OneShot) -> output
 ## Estados de Locomotion: Grounded, Fall, Dive, Swing_L, Swing_R, Release_Neutral,
-##   Release_Flip, WebZip, PointZip, Perch, WallRun_V, WallRun_H, Land_Soft,
-##   Land_Roll, Land_Hero. Los tiempos de mezcla viven en las transiciones
+##   Release_Flip, Release_Reach, WebZip, PointZip, Perch, WallRun_V, WallRun_H,
+##   Land_Soft, Land_Roll, Land_Hero. Los tiempos de mezcla viven en las transiciones
 ##   (xfade_time), con los valores de la tabla de la sección 5.
 
 const P_PLAYBACK := "parameters/Locomotion/playback"
@@ -58,6 +58,7 @@ const STATE_NODES := {
 @export var orient_rate_air := 6.0
 @export var param_rate := 12.0
 @export var release_anim_time := 0.45
+@export var reach_anim_time := 0.25
 @export var land_anim_time := 0.35
 
 var aggressive := false
@@ -167,6 +168,11 @@ func _on_web_fired(hand: int, anchor: Vector3) -> void:
 func _on_web_released(_hand: int, perfect: bool) -> void:
 	if web_line:
 		web_line.release()
+	if controller.last_release_chained:
+		# Swing encadenado: el brazo ya busca la siguiente web.
+		_one_shot_state = "Release_Reach"
+		_one_shot_timer = reach_anim_time
+		return
 	var fast := controller.velocity.length() > aggressive_on_speed
 	_one_shot_state = "Release_Flip" if (perfect or fast) else "Release_Neutral"
 	_one_shot_timer = release_anim_time
