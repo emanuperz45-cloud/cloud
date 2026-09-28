@@ -26,6 +26,12 @@ extends CharacterBody3D
 ## Web Wings (glide) en el aire: planeo; stick adelante pica, atrás encabrita, a los
 ## lados alabea. Abrirlas en picada da un impulso. Túneles de viento y corrientes
 ## ascendentes (WindField) aceleran y elevan.
+## Loop de Loop (Spider-Man 2): picada + balanceo -> la cuerda se recoge, da la
+## vuelta completa y al terminarla sale disparado con un impulso.
+## Spider-Dash / Spider-Jump (Spider-Man 2): gastan una carga del medidor (2 cargas,
+## se recargan solas y con trucos, sueltas perfectas y loops).
+## Parkour: esprintando, al salir de un borde se salta hacia delante; contra un
+## obstáculo bajo (< 1,9 m) se salta por encima (vault).
 ## Super Slingshot: mantener point_zip y pulsar salto tensa dos webs por delante;
 ## soltar el salto lanza. Truco mantenido en un swing rápido recoge cuerda y el arco
 ## da la vuelta completa (loop de loop).
@@ -44,8 +50,13 @@ signal looped(count: int)
 signal wings_opened(boosted: bool)
 signal wings_closed()
 signal slingshot_launched(charge: float)
+signal loop_boosted()
+signal spider_dashed()
+signal spider_jumped()
+signal ledge_leaped()
+signal vaulted(height: float)
 
-enum State { GROUNDED, FALL, DIVE, SWING, WEB_ZIP, POINT_ZIP, PERCH, WALL_RUN, GLIDE, SLINGSHOT }
+enum State { GROUNDED, FALL, DIVE, SWING, WEB_ZIP, POINT_ZIP, PERCH, WALL_RUN, GLIDE, SLINGSHOT, VAULT }
 enum Trick { SPIN, FRONT_FLIP, BACK_FLIP, ROLL_LEFT, ROLL_RIGHT }
 
 const HAND_LEFT := -1
@@ -86,6 +97,15 @@ var slingshot_aim := Vector3.FORWARD
 var slingshot_anchors: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]   ## [izquierda, derecha]
 ## Lo pone la cámara: el jugador la está moviendo (planeando = timón hacia donde mira).
 var camera_steer_active := false
+var spider_meter := 2.0           ## cargas de Spider-Dash / Spider-Jump (0..spider_meter_charges)
+var dash_timer := 0.0             ## > 0 durante el Spider-Dash (gravedad baja, pose de vuelo)
+var vault_timer := 0.0            ## > 0 durante el salto de obstáculo (pose de vault)
+var _loop_mode := false           ## swing enganchado desde una picada: Loop de Loop
+var _vault_a := Vector3.ZERO      ## vault: curva de Bézier a -> c -> b
+var _vault_c := Vector3.ZERO
+var _vault_b := Vector3.ZERO
+var _vault_time := 0.3
+var _vault_speed := 0.0
 var move_input := Vector2.ZERO
 var cam_forward := Vector3.FORWARD
 var cam_right := Vector3.RIGHT
@@ -138,6 +158,9 @@ func update_swinging_system(delta: float) -> void:
 	trick_timer = maxf(trick_timer - delta, 0.0)
 	land_timer = maxf(land_timer - delta, 0.0)
 	_wall_cooldown = maxf(_wall_cooldown - delta, 0.0)
+	dash_timer = maxf(dash_timer - delta, 0.0)
+	vault_timer = maxf(vault_timer - delta, 0.0)
+	spider_meter = minf(spider_meter + delta / tuning.spider_meter_recharge, tuning.spider_meter_charges)
 	if _web_pull_timer > 0.0:
 		_web_pull_timer -= delta
 		if _web_pull_timer <= 0.0:
@@ -146,6 +169,7 @@ func update_swinging_system(delta: float) -> void:
 	_update_travel_dir(delta)
 	if anchor_finder:
 		anchor_finder.scan(global_position, velocity, travel_dir, delta)
+	_spider_skills()
 
 	match state:
 		State.GROUNDED:
@@ -166,6 +190,8 @@ func update_swinging_system(delta: float) -> void:
 			_update_glide(delta)
 		State.SLINGSHOT:
 			_update_slingshot(delta)
+		State.VAULT:
+			_update_vault()
 
 
 func _read_input() -> void:
@@ -259,9 +285,76 @@ func _update_grounded(delta: float) -> void:
 			jumped.emit(c)
 			_set_state(State.FALL)
 			return
+	if move_input.length() > 0.3 and is_on_wall() and _try_vault():
+		return
 	if swing_held and _try_wall_contact():
 		return
 	if not is_on_floor():
+		var hv := RegulatedPendulum.flat(velocity)
+		if sprinting and hv.length() > 10.0 and velocity.y <= 0.5:
+			# Parkour: esprintando, el borde de la azotea se convierte en un salto largo.
+			velocity += hv.normalized() * tuning.ledge_leap_forward
+			velocity.y = tuning.ledge_leap_up
+			ledge_leaped.emit()
+		_set_state(State.FALL)
+
+
+## Vault: obstáculo bajo delante (aire acondicionado, murete) -> se salta por encima
+## apoyando una mano, sin perder la carrera.
+func _try_vault() -> bool:
+	var n := RegulatedPendulum.flat(get_wall_normal())
+	if n.length_squared() < 0.25:
+		return false
+	var fwd := -n.normalized()
+	if RegulatedPendulum.safe_normalized(_wish_dir(), fwd).dot(fwd) < 0.5:
+		return false
+	var feet := global_position.y - 0.9
+	var space := get_world_3d().direct_space_state
+	var probe := global_position + fwd * 0.75 + Vector3.UP * 2.4
+	var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+			probe, probe + Vector3.DOWN * 3.6, collision_mask, [get_rid()]))
+	if hit.is_empty():
+		return false
+	var top: float = (hit.position as Vector3).y
+	var h := top - feet
+	if h < 0.25 or h > tuning.vault_max_height:
+		return false
+	# Fondo del obstáculo: se sondea hacia delante hasta volver a la altura del suelo.
+	var depth := 3.0
+	for i in 10:
+		var d := 0.75 + 0.3 * (i + 1)
+		var p := global_position + fwd * d + Vector3.UP * 2.4
+		var hh := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+				p, p + Vector3.DOWN * 3.6, collision_mask, [get_rid()]))
+		if hh.is_empty() or (hh.position as Vector3).y < top - 0.2:
+			depth = d - 0.75
+			break
+	var speed := maxf(RegulatedPendulum.flat(velocity).length(), tuning.run_speed)
+	_vault_a = global_position
+	if depth > 2.4:
+		_vault_b = global_position + fwd * 1.3 + Vector3.UP * (h + 0.05)     # obstáculo largo: sube encima
+	else:
+		_vault_b = global_position + fwd * (0.75 + depth + 0.9)             # lo salta entero
+	var apex_y := top + 0.95 + tuning.vault_extra * 0.5
+	var mid := (_vault_a + _vault_b) * 0.5
+	_vault_c = Vector3(mid.x, 2.0 * apex_y - mid.y, mid.z)
+	_vault_time = clampf(_vault_a.distance_to(_vault_b) / maxf(speed, 7.0), 0.28, 0.5)
+	_vault_speed = speed
+	vault_timer = _vault_time
+	vaulted.emit(h)
+	_set_state(State.VAULT)
+	return true
+
+
+## Vault guiado: el cuerpo recorre la curva sin colisiones y sale corriendo.
+func _update_vault() -> void:
+	var t := clampf(state_time / _vault_time, 0.0, 1.0)
+	var p := _vault_a.lerp(_vault_c, t).lerp(_vault_c.lerp(_vault_b, t), t)
+	var dir := RegulatedPendulum.safe_normalized(RegulatedPendulum.flat(_vault_b - _vault_a), travel_dir)
+	velocity = dir * _vault_speed
+	global_position = p
+	if t >= 1.0:
+		velocity = dir * _vault_speed + Vector3.DOWN * 1.0
 		_set_state(State.FALL)
 
 
@@ -286,7 +379,7 @@ func _air_accel(v: Vector3, dive: bool, zip: bool, control: Vector3) -> Vector3:
 
 func _update_air(delta: float) -> void:
 	var dive := state == State.DIVE
-	velocity += _air_accel(velocity, dive, false, _wish_dir()) * delta
+	velocity += _air_accel(velocity, dive, dash_timer > 0.0, _wish_dir()) * delta
 	move_and_slide()
 
 	if is_on_floor():
@@ -329,6 +422,7 @@ func _start_trick() -> void:
 	else:
 		trick_index = Trick.SPIN
 	trick_timer = TRICK_TIME
+	_gain_meter(tuning.spider_meter_trick_gain)       # "Aerial Escapades": los trucos recargan
 	trick_started.emit()
 
 
@@ -363,6 +457,8 @@ func _try_attach() -> bool:
 		hand = -hand
 	if not anchor_finder.validate(cand, global_position + hand_offset):
 		return false
+	# Loop de Loop: engancharse en plena picada rápida cierra el arco hasta dar la vuelta.
+	_loop_mode = state == State.DIVE and velocity.length() > tuning.loop_dive_min_speed
 	pendulum.attach(global_position, velocity, cand.point, travel_dir, cand.ground_y,
 			anchor_finder.cruise_y())
 	_last_loops = 0
@@ -381,7 +477,7 @@ func _update_swing(delta: float) -> void:
 
 	var hold := Input.is_action_pressed("swing")
 	var reel := -move_input.y            # W = subir por la telaraña (solo colgado)
-	var tighten := Input.is_action_pressed("trick")   # cerrar el arco -> loop
+	var tighten := Input.is_action_pressed("trick") or _loop_mode   # cerrar el arco -> loop
 	var steps := maxi(1, ceili(delta / tuning.substep))
 	var h := delta / steps
 	for i in steps:
@@ -389,6 +485,15 @@ func _update_swing(delta: float) -> void:
 	if pendulum.loops > _last_loops:
 		_last_loops = pendulum.loops
 		looped.emit(_last_loops)
+		_gain_meter(tuning.spider_meter_loop_gain)
+		if _loop_mode:
+			# Fin del Loop de Loop: suelta sola y sale disparado hacia delante.
+			_loop_mode = false
+			_release(false)
+			var fwd := RegulatedPendulum.safe_normalized(RegulatedPendulum.flat(velocity), travel_dir)
+			velocity += fwd * tuning.loop_boost_forward + Vector3.UP * tuning.loop_boost_up
+			loop_boosted.emit()
+			return
 
 	# El solver propone; move_and_slide dispone (colisiones reales del mundo).
 	velocity = (pendulum.pos - global_position) / delta
@@ -421,6 +526,8 @@ func _release(swing_jump: bool) -> void:
 	var hanging := pendulum.sustain and pendulum.speed < 4.0
 	var v := pendulum.release()
 	last_release_perfect = pendulum.last_release_perfect
+	if last_release_perfect:
+		_gain_meter(tuning.spider_meter_trick_gain * 0.7)
 	last_release_chained = false
 	if swing_jump:
 		var bonus := 1.0 + (tuning.release_perfect_bonus if last_release_perfect else 0.0)
@@ -884,3 +991,42 @@ func _update_slingshot(delta: float) -> void:
 	elif not Input.is_action_pressed("point_zip"):
 		web_released.emit(HAND_BOTH, false)          # cancelado
 		_set_state(_sling_prev_state)
+
+
+# ---------------------------------------------------------------------------
+# Spider-Dash y Spider-Jump (Spider-Man 2): medidor de 2 cargas
+# ---------------------------------------------------------------------------
+func _gain_meter(amount: float) -> void:
+	spider_meter = minf(spider_meter + amount, tuning.spider_meter_charges)
+
+
+func _spider_skills() -> void:
+	if spider_meter < 1.0 or state in [State.SLINGSHOT, State.POINT_ZIP]:
+		return
+	if Input.is_action_just_pressed("spider_jump"):
+		_leave_for_air()
+		velocity = RegulatedPendulum.flat(velocity) * 0.75 + Vector3.UP * tuning.spider_jump_speed
+		spider_meter -= 1.0
+		_set_state(State.FALL)
+		spider_jumped.emit()
+	elif Input.is_action_just_pressed("spider_dash") and state not in [State.GROUNDED, State.PERCH]:
+		_leave_for_air()
+		var dir := RegulatedPendulum.safe_normalized(cam_forward, travel_dir)
+		var along := maxf(velocity.dot(dir), 0.0)
+		velocity = dir * (along + tuning.spider_dash_speed) + Vector3.UP * maxf(velocity.y * 0.3, 2.0)
+		dash_timer = tuning.spider_dash_time
+		spider_meter -= 1.0
+		_set_state(State.FALL)
+		spider_dashed.emit()
+
+
+## Suelta lo que ate al jugador (web del swing o del zip) antes de un impulso.
+func _leave_for_air() -> void:
+	match state:
+		State.SWING:
+			pendulum.active = false
+			_loop_mode = false
+			web_released.emit(hand, false)
+			hand = -hand
+		State.WEB_ZIP:
+			web_released.emit(HAND_BOTH, false)

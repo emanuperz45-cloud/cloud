@@ -53,6 +53,15 @@ func _ready() -> void:
 		_play("sling", -2.0, 0.03)
 		_boost = maxf(_boost, c))
 	controller.point_launched.connect(func(_p: bool) -> void: _boost = maxf(_boost, 0.6))
+	controller.loop_boosted.connect(func() -> void:
+		_play("sling", -6.0, 0.05)
+		_boost = 1.0)
+	controller.spider_dashed.connect(func() -> void:
+		_play("whoosh", -2.0, 0.05)
+		_boost = maxf(_boost, 0.8))
+	controller.spider_jumped.connect(func() -> void: _play("whoosh", -3.0, 0.05))
+	controller.vaulted.connect(func(_h: float) -> void: _play("land", -12.0, 0.1))
+	controller.ledge_leaped.connect(func() -> void: _play("whoosh", -8.0, 0.1))
 
 
 func _process(delta: float) -> void:

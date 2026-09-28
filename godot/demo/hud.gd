@@ -5,7 +5,7 @@ extends CanvasLayer
 
 const STATE_NAMES := [
 	"SUELO", "CAÍDA", "PICADA", "BALANCEO", "WEB ZIP", "POINT ZIP", "POSADO", "WALL RUN",
-	"PLANEO", "SLINGSHOT",
+	"PLANEO", "SLINGSHOT", "VAULT",
 ]
 const HELP := """\
 CLIC IZQ / R2 mantenido: balanceo en la misma telaraña (si no sueltas, te quedas colgado)
@@ -15,11 +15,14 @@ ESPACIO / A: en el balanceo salta (abajo = adelante, al final = arriba) · en el
 SUELO: clic mantenido = sprint (contra una fachada sube corriendo) · salta con clic = telaraña
 PARED: con clic corres, sin clic trepas · ESPACIO tira hacia arriba o salta de la pared
 MAYÚS / B: picada · en una esquina corriendo, gira la esquina con una telaraña
+   PICADA + CLIC: LOOP DE LOOP (vuelta completa y sale disparado)
+C / R3: SPIDER-DASH · V / L3: SPIDER-JUMP (gastan una carga del medidor; los trucos recargan)
+SPRINT: salta solo los bordes de azotea y pasa por encima de obstáculos bajos
 G, CTRL, RUEDA / Y en el aire: WEB WINGS · W picar, S subir, A/D girar (o apunta con el ratón)
    ábrelas en picada = impulso · anillos azules = túnel de viento · columnas = corriente
 Q, CLIC DER / L2: point zip al punto amarillo, ESPACIO al llegar = Point Launch
    Q + ESPACIO mantenidos (suelo, posado, pared): SUPER SLINGSHOT, suelta ESPACIO
-F / LB + dirección: trucos · mantenido en un balanceo rápido: LOOP
+F / LB + dirección: trucos · mantenido en un balanceo rápido: cierra el arco (loop)
 R: reaparecer · ESC: ratón · H: mostrar u ocultar esta ayuda"""
 
 var controller: TraversalController
@@ -45,7 +48,7 @@ func _ready() -> void:
 	_help.anchor_top = 1.0
 	_help.anchor_bottom = 1.0
 	_help.offset_left = 24.0
-	_help.offset_top = -400.0
+	_help.offset_top = -470.0
 	_help.offset_bottom = -16.0
 	_help.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
 	_help.text = HELP
@@ -66,6 +69,7 @@ func _ready() -> void:
 	controller.wings_opened.connect(func(boosted: bool) -> void:
 		if boosted:
 			_show_banner("¡WEB WINGS AL LÍMITE!"))
+	controller.loop_boosted.connect(func() -> void: _show_banner("¡LOOP DE LOOP!"))
 	controller.slingshot_launched.connect(func(c: float) -> void:
 		_show_banner("SUPER SLINGSHOT" if c < 0.95 else "¡SUPER SLINGSHOT MÁXIMO!"))
 
@@ -151,6 +155,16 @@ func _draw_reticle() -> void:
 	var cam := camera_rig.camera
 	var center := _reticle.size * 0.5
 	_reticle.draw_circle(center, 2.5, Color(1, 1, 1, 0.6))
+	# Medidor de Spider-Dash / Spider-Jump: una barra por carga, abajo al centro.
+	var charges := int(controller.tuning.spider_meter_charges)
+	var bw := 70.0
+	var y := _reticle.size.y - 34.0
+	for i in charges:
+		var x0 := center.x - (charges * (bw + 8.0)) * 0.5 + i * (bw + 8.0)
+		var fill := clampf(controller.spider_meter - i, 0.0, 1.0)
+		_reticle.draw_rect(Rect2(x0, y, bw, 8.0), Color(0, 0, 0, 0.45))
+		var col := Color(0.95, 0.2, 0.2, 0.95) if fill >= 1.0 else Color(0.8, 0.8, 0.85, 0.6)
+		_reticle.draw_rect(Rect2(x0, y, bw * fill, 8.0), col)
 	if _perch == null or cam.is_position_behind(_perch):
 		return
 	var p := cam.unproject_position(_perch)

@@ -123,6 +123,24 @@ extends Resource
 @export var glide_updraft_accel: float = 30.0
 @export var glide_updraft_decay: float = 1.2       ## s de inercia del impulso al salir
 
+@export_group("Spider-Man 2: loop, dash, jump")
+@export var loop_dive_min_speed: float = 25.0     ## engancharse en picada a más de esto = Loop de Loop
+@export var loop_boost_forward: float = 14.0      ## impulso al terminar la vuelta
+@export var loop_boost_up: float = 6.0
+@export var spider_meter_charges: float = 2.0
+@export var spider_meter_recharge: float = 5.0    ## s por carga
+@export var spider_meter_trick_gain: float = 0.35 ## truco (una suelta perfecta da el 70 %)
+@export var spider_meter_loop_gain: float = 0.5
+@export var spider_dash_speed: float = 22.0
+@export var spider_dash_time: float = 0.3         ## s con gravedad baja tras el dash
+@export var spider_jump_speed: float = 26.0
+
+@export_group("Parkour")
+@export var ledge_leap_up: float = 6.5            ## saltar el borde de la azotea esprintando
+@export var ledge_leap_forward: float = 3.0
+@export var vault_max_height: float = 1.9         ## obstáculos más bajos se saltan (vault)
+@export var vault_extra: float = 0.5              ## m de holgura sobre el obstáculo
+
 @export_group("Super Slingshot")
 @export var slingshot_charge_time: float = 1.2
 @export var slingshot_pull_back: float = 1.6

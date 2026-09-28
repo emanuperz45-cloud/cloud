@@ -285,7 +285,11 @@ Referencia: el moveset de traversal de *Marvel's Spider-Man* (2018) según guía
 | *Quick Recovery* (habilidad) | X durante la rodada al aterrizar relanza al aire | Espacio durante la rodada | — |
 | **L3** | Picada para ganar velocidad | Mayús / B mantenido | Mantenido en vez de toque |
 | **○+△ + stick** | *Air Tricks* según la dirección | F / LB + dirección | 5 trucos: voltereta adelante/atrás, tirabuzón izq./der., giro |
-| *Loop* en el swing | Vuelta completa alrededor del anclaje en arcos muy rápidos | F / LB **mantenido** en un swing > 20 m/s | Se provoca a voluntad recogiendo cuerda hasta el radio de loop (§2.1) |
+| *Loop de Loop* (*SM2*) | Picada (R3) + R2: vuelta completa alrededor del anclaje y gran impulso al terminarla | Picada + clic a > 25 m/s (también F / LB mantenido en un swing rápido) | Al completar la vuelta suelta sola con +14 m/s adelante y +6 arriba (§2.9) |
+| *Spider-Dash* (*SM2*) | Impulso hacia delante en el aire / balanceo, con medidor | C / R3 | 1 carga: +22 m/s hacia la cámara y 0,3 s de gravedad baja |
+| *Spider-Jump* (*SM2*) | Salto muy alto en el aire con el medidor lleno | V / L3 | 1 carga: $v_y=26$ m/s (también desde el suelo) |
+| *Aerial Escapades* (*SM2*) | Las acrobacias recargan el medidor | Automático | Truco +0,35, suelta perfecta +0,25, loop +0,5 cargas; además 1 carga / 5 s |
+| Parkour (PS4) | Saltar obstáculos y los bordes de azotea sin parar | Sprint (clic) | *Vault* guiado sobre obstáculos < 1,9 m; al esprintar fuera de un borde, salto +6,5 m/s con voltereta |
 | **△** en el aire (*Spider-Man 2*) | *Web Wings*: planeo con membranas entre brazos y cuerpo; stick adelante pica, atrás frena y sube | G, Ctrl o rueda / Y | Mismo botón las pliega (§2.6) |
 | Abrir alas en picada (*SM2*) | Impulso extra al desplegarlas a gran velocidad | Picada + G a > 30 m/s cayendo | +8 m/s (*ULTIMATE WINGS* en el HUD) |
 | Túneles de viento (*SM2*) | Corredores de aire sobre las avenidas que empujan a las alas | Anillos azules sobre 5 avenidas | Empuje con techo (~57 m/s) y deriva al eje |
@@ -327,7 +331,14 @@ stateDiagram-v2
     WallRun --> Slingshot: trepando, point zip + salto
     Slingshot --> Fall: soltar salto (lanzamiento)
     Slingshot --> Grounded: soltar point zip (cancelar)
+    Dive --> Swing: clic a > 25 m/s = Loop de Loop
+    Swing --> Fall: fin del Loop de Loop (impulso)
+    Grounded --> Vault: obstáculo bajo delante
+    Vault --> Fall: fin del arco (0,28–0,5 s)
+    Grounded --> Fall: borde de azotea esprintando (salto)
 ```
+
+*Spider-Dash* y *Spider-Jump* no son estados: desde cualquier estado de aire (y el suelo, para el salto) cambian la velocidad, sueltan la web si la hay y pasan a **Fall**.
 
 **Prioridad de transiciones** (en este orden dentro de cada estado): colisión→pared > suelo→Grounded > input explícito (salto, zip, point zip) > clic de swing > temporizadores. El salto usa un **buffer de 0,15 s** para que una pulsación ligeramente temprana cuente (esencial para Point Launch). Tras dejar una pared hay 0,25 s de enfriamiento antes de volver a pegarse (evita bucles de entrar/salir en cornisas y esquinas).
 
@@ -485,6 +496,19 @@ Desde el suelo (point zip mantenido y luego salto), posado o trepando: dos rayos
 $$\mathbf v=\operatorname{lerp}(20,\,58,\,c^2)\;\widehat{(\hat{\mathbf a}+\hat{\mathbf y})}\quad(45^\circ)$$
 con voltereta (doble a carga completa), *punch* de FOV de $8+14c$ grados y líneas de velocidad; soltar el point zip antes cancela y devuelve al estado anterior. Un toque corto de point zip en el suelo (< 0,3 s) sigue siendo *Zip to Point*.
 
+### 2.9 Movimientos de *Spider-Man 2* y parkour
+
+| Movimiento | Condición | Efecto |
+|---|---|---|
+| **Loop de Loop** | enganchar desde **Dive** con $\lVert\mathbf v\rVert>25$ m/s | el swing entra en modo *tighten* (§2.1): la cuerda baja a $L=0{,}8\,v^2/(5g_{subida})$, el arco da la vuelta, y al contar la vuelta completa ($\int\omega\,dt\ge2\pi$) suelta sola con $\mathbf v\mathrel{+}=14\,\hat{\mathbf d}_{xz}+6\,\hat{\mathbf y}$. Medido: enganche a ~49 m/s en picada, salida a **57 m/s** |
+| **Spider-Dash** | aire, swing, zip o planeo; ≥ 1 carga | $\mathbf v=\hat{\mathbf c}\,(\max(\mathbf v\cdot\hat{\mathbf c},0)+22)+\hat{\mathbf y}\max(0{,}3v_y,2)$ con $\hat{\mathbf c}$ = cámara; 0,3 s con gravedad de zip; cuerpo en horizontal con un brazo delante. Medido: 15 → **36,9 m/s** |
+| **Spider-Jump** | cualquier estado salvo slingshot/point zip; ≥ 1 carga | $\mathbf v=0{,}75\,\mathbf v_{xz}+26\,\hat{\mathbf y}$ (~+35 m de altura con la gravedad de caída) y mortal atrás estirado |
+| **Medidor** | 2 cargas | +1 carga cada 5 s; truco +0,35; suelta perfecta +0,25; loop +0,5 (*Aerial Escapades*). HUD: dos barras abajo al centro |
+| **Vault** | en el suelo, avanzando contra una pared cuya cima está a 0,25–1,9 m de los pies | se sondea la cima y el fondo del obstáculo; el cuerpo recorre sin colisión una Bézier $a\to c\to b$ cuyo punto medio pasa 0,95 m (+ holgura) sobre la cima; si el obstáculo es largo (> 2,4 m) termina encima. Duración $\operatorname{clamp}(\lVert b-a\rVert/v,\,0{,}28,\,0{,}5)$ s; sale corriendo a la misma velocidad |
+| **Salto de borde** | esprintando (> 10 m/s) al perder el suelo sin haber saltado | $v_y=6{,}5$, +3 m/s adelante y voltereta agrupada; si se mantiene el clic, a los 0,15 s dispara la web (como en PS4) |
+
+Las azoteas tienen aires acondicionados (1,1 m: obstáculos de *vault*) y depósitos de agua sobre patas (anclajes y puntos de posado), con su propio RNG para no alterar la ciudad calibrada.
+
 ### 2.8 Sensación de velocidad (cámara, pantalla y sonido)
 
 | Capa | Regla |
@@ -639,6 +663,20 @@ En wall run, rayo desde cada cadera hacia $-\hat{\mathbf m}$ (1,6 m); target = i
 | **Viento** (velocidad terminal) | Ruido procedural de 8–14 Hz en muñecas/tobillos con amplitud $\propto (v/v_{term})^2$ | $v$ |
 
 **Espectacularidad (cámara, fuera del alcance del runtime pero necesaria para vender la velocidad):** FOV $70^\circ\to82^\circ$ con $v$, *lag* de cámara con muelle crítico (0,25 s), pequeño *shake* (0,15 °) en el pico de tensión, líneas de velocidad por encima de 30 m/s.
+
+### 3.6 Cuerpo continuo con piel (demo)
+
+El maniquí de piezas se sustituye por **una sola malla con piel** generada por `tools/body_baker/bake_body.py`:
+
+1. **Forma.** Unión suave (*smooth-min*, $k=7$ cm en el tronco, 2,5 cm en extremidades, 5 cm entre huesos) de 40 volúmenes anatómicos atados a los 11 huesos del maniquí: caja torácica, pectorales, dorsales, trapecios, abdomen y oblicuos, glúteos, deltoides, bíceps, tríceps, antebrazos, manos con pulgar, cuádriceps, isquios, rodillas, gemelos, pies, cuello, cráneo y mandíbula.
+2. **Pose de enlace.** Se modela con los brazos abiertos 80° y las piernas 8° (así no se funden con el torso); el esqueleto de reposo del juego tiene los brazos abajo y la `Skin` guarda las inversas de las matrices de enlace.
+3. **Malla.** SDF muestreada a 12 mm → *marching cubes* → 20 222 vértices / 40 440 triángulos; normales del gradiente exacto de la SDF (sombreado suave); caras en sentido horario (convención de Godot).
+4. **Pesos.** "Propiedad" de cada hueso: $w_b\propto e^{-(d_b-d)/1{,}2\,\text{cm}}$ (cero a más de 6 cm), 4 pasadas de suavizado laplaciano sobre la malla y los 4 mayores. Las zonas de unión (hombro, cintura, cadera, cuello) mezclan huesos y no se pliegan.
+5. **Formato.** Binario compacto (573 KiB): posiciones u16, normales i8, huesos/pesos u8, índices u16 y matrices de enlace (`demo/body_mesh.gd` lo convierte en `ArrayMesh` + `Skin`).
+6. **Traje** (`demo/body.gdshader`), calculado en la posición de enlace (UV/UV2) para que vaya pegado a la piel: telaraña radial en pecho (centro en el esternón) y espalda, líneas longitudinales con anillos combados en brazos y piernas, telaraña radial en la máscara desde el entrecejo, lentes blancas en almendra con marco negro, araña negra en el pecho y otra grande en la espalda, costados más oscuros, microtextura hexagonal y relieve por derivadas. Las zonas se mezclan con pesos suaves (sin costuras).
+7. **Movimiento fluido.** Las poses se calculan a 60 Hz en la jerarquía lógica; en `_process` los huesos se interpolan entre los dos últimos pasos de física (slerp con la fracción de interpolación), así el cuerpo se mueve sin escalones a 120/144 Hz.
+
+**Repertorio de animación de la demo** (todo procedimental): sueltas variadas como en el juego —voltereta agrupada, tirabuzón estirado, pirueta abierta, rueda lateral, mortal atrás, carpado; nunca la misma dos veces seguidas; la perfecta es doble o de giro y medio—, cada una con su postura (la postura se abre en el último 25 % del giro); tirón del brazo al engancharse (codo a 75° que se estira al tensarse la web); *spidey squat* al posarse (rodillas abiertas, mano apoyada entre los pies); idle con respiración, cambio de peso y mirada lenta; flexión al aterrizar suave; la cabeza mira hacia la velocidad en carrera, balanceo y caída; Spider-Dash en "vuelo" con un brazo delante; Spider-Jump estirado; vault con una mano apoyada y piernas al lado; salto de borde con voltereta.
 
 ---
 
@@ -797,6 +835,10 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 | `glide_dive_boost` | 10 m/s | Abrir las alas en picada a > 30 m/s |
 | `glide_tunnel_accel` / `glide_tunnel_speed` / `glide_tunnel_authority` / `glide_tunnel_align` / `glide_tunnel_center` | 26 m/s² / 72 m/s / 0,8 / 1,5 s⁻¹ / 1,2 s⁻¹ | Túnel: crucero ~57 m/s, centrado en el eje |
 | `glide_updraft_speed` / `glide_updraft_accel` / `glide_updraft_decay` | 16 m/s / 30 m/s² / 1,2 s | Corriente ascendente con inercia |
+| `loop_dive_min_speed` / `loop_boost_forward` / `loop_boost_up` | 25 m/s / 14 / 6 m/s | Loop de Loop desde picada |
+| `spider_meter_charges` / `spider_meter_recharge` / `spider_meter_trick_gain` / `spider_meter_loop_gain` | 2 / 5 s / 0,35 / 0,5 | Medidor de Spider-Dash / Jump |
+| `spider_dash_speed` / `spider_dash_time` / `spider_jump_speed` | 22 m/s / 0,3 s / 26 m/s | Spider-Dash y Spider-Jump |
+| `ledge_leap_up` / `ledge_leap_forward` / `vault_max_height` / `vault_extra` | 6,5 / 3 m/s / 1,9 m / 0,5 m | Parkour |
 | `slingshot_charge_time` / `slingshot_min_speed` / `slingshot_max_speed` / `slingshot_lift` / `slingshot_pull_back` | 1,2 s / 20 / 58 m/s / 1,0 (45°) / 1,6 m | Super Slingshot |
 
 ### 5.3 Animación: tiempos de mezcla y umbrales
@@ -1115,7 +1157,10 @@ godot/swing_system/
   web_line.gd                        ← web visual Verlet (afinada, con estrella de impacto)
   web_wings.gd                       ← planeo (port 1:1 de Glider)
   wind_field.gd                      ← túneles de viento y corrientes ascendentes
-godot/demo/                          ← demo jugable (ciudad, maniquí, cámara, HUD, FX, autopiloto)
+godot/demo/                          ← demo jugable (ciudad, personaje, cámara, HUD, FX, autopiloto)
+  body/body_mesh.bin                 ← cuerpo continuo horneado (§3.6)
+  body_mesh.gd / body.gdshader       ← cargador (ArrayMesh + Skin) y traje
+tools/body_baker/bake_body.py        ← horneado del cuerpo (numpy + scikit-image)
 ```
 
 ### C. Montaje de la escena en Godot (con un personaje riggeado)
@@ -1146,11 +1191,11 @@ InputMap: `move_left/right/forward/back`, `swing` (R2), `jump` (✕), `web_zip` 
 | Pieza | Validación realizada |
 |---|---|
 | Física (Python) | 27 tests unitarios (péndulo sostenido, loop con y sin *tighten*, planeo: fineza, picado/encabritado, pérdida con histéresis, viraje rápido a cualquier velocidad, impulso en picada, túnel con techo y centrado, corriente con inercia) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
-| Demo (Godot) | Autopiloto con escenarios `tour`, `hang` (mantener el clic: 1 sola web, quieto a los 7 s, W sube 12,6 → 5,1 m), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 205 km/h a altura casi constante; picada 48,6 m/s + alas = 58,6 m/s; viraje de 78°/s a 58 m/s; timón de cámara 70° en 1,5 s; corriente +9 m) y `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), con el motor oficial y con la plantilla slim |
+| Demo (Godot) | Autopiloto con escenarios `tour`, `hang` (mantener el clic: 1 sola web, quieto a los 7 s, W sube 12,6 → 5,1 m), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 205 km/h a altura casi constante; picada 48,6 m/s + alas = 58,6 m/s; viraje de 78°/s a 58 m/s; timón de cámara 70° en 1,5 s; corriente +9 m) `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), `run` (sprint con curva) y `sm2` (Loop de Loop con salida a 57 m/s, Spider-Dash 15 → 36,9 m/s, Spider-Jump $v_y=26$, vault de 0,32 s sobre un aire acondicionado de 1,1 m, salto de borde de una azotea de 22 m), con el motor oficial y con la plantilla slim |
 | Baker de Blender | Test end-to-end con `bpy` 5.0.1 (trayectoria < 1 mm, curvas, IK, GLB con 42 canales) |
 | GDScript | Compila sin errores en Godot 4.7.2; la demo corre 120 s con autopiloto sin errores (balanceo, picada, wall run, aterrizajes) y el `.exe` exportado se validó cargando su PCK embebido. `AnimationTree`, IK de esqueleto y *look-at* no se han probado con un rig real (la demo usa un maniquí procedural) |
 
-Límites asumidos: la locomoción terrestre, la cámara y el combate quedan fuera; el *pose matching* de entrada se especifica (§3.4) pero no está implementado; las poses clave del baker se capturan a mano.
+Límites asumidos: el combate queda fuera; el cuerpo de la demo no tiene dedos ni ropa simulada; el *pose matching* de entrada se especifica (§3.4) pero no está implementado; las poses clave del baker se capturan a mano.
 
 ### E. Referencias técnicas
 - D. Bollo, *Inertialization: High-Performance Animation Transitions in Gears of War*, GDC 2018.

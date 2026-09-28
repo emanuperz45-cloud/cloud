@@ -9,6 +9,8 @@ extends Node
 ##         sprint contra una fachada, wall run, trepar y salto de pared
 ##  pose : personaje quieto en la calle con la cámara de frente y cerca (traje)
 ##  run  : sprint por la avenida x = 0 con una curva (capturas de la carrera)
+##  sm2  : Loop de Loop (picada + clic), Spider-Dash, Spider-Jump, vault sobre un
+##         aire acondicionado y salto de borde de azotea esprintando
 ##  glide: Web Wings desde lo alto: planeo, picada + alas (impulso), viraje,
 ##         túnel de viento de la avenida x = 0, corriente ascendente y timón de cámara
 ##  sling: Super Slingshot desde el suelo (carga completa), cancelación y loop
@@ -55,6 +57,19 @@ func _ready() -> void:
 			print("[dbg] t=%.2f %s -> %s pos=%s v=%s" % [_t, a, b, player.global_position, player.velocity]))
 	player.wings_opened.connect(func(b: bool) -> void: _count("wings_boost" if b else "wings"))
 	player.wings_closed.connect(func() -> void: _count("wings_closed"))
+	player.loop_boosted.connect(func() -> void:
+		_count("loop_boost")
+		_mark["loop_boost_speed"] = snappedf(player.velocity.length(), 0.1))
+	player.spider_dashed.connect(func() -> void:
+		_count("spider_dash")
+		_mark["dash_speed"] = snappedf(player.velocity.length(), 0.1))
+	player.spider_jumped.connect(func() -> void:
+		_count("spider_jump")
+		_mark["jump_vy"] = snappedf(player.velocity.y, 0.1))
+	player.vaulted.connect(func(h: float) -> void:
+		_count("vault")
+		_mark["vault_h"] = snappedf(h, 0.01))
+	player.ledge_leaped.connect(func() -> void: _count("ledge_leap"))
 	player.slingshot_launched.connect(func(c: float) -> void:
 		_count("slingshot")
 		_mark["sling_charge"] = snappedf(c, 0.01)
@@ -100,6 +115,8 @@ func _physics_process(delta: float) -> void:
 			_glide()
 		"sling":
 			_sling()
+		"sm2":
+			_sm2()
 		"run":
 			if _at(0.02):
 				_place(Vector3(0.0, 0.95, 60.0), Vector3.FORWARD)
@@ -109,7 +126,7 @@ func _physics_process(delta: float) -> void:
 		"pose":
 			if _at(0.02):
 				_place(Vector3(-4.0, 0.95, 3.0), Vector3.FORWARD)
-			camera_rig.distance_override = 3.0
+			camera_rig.distance_override = 1.7
 			camera_rig.pitch = -0.18
 			camera_rig.look_towards(Vector3.BACK)          # cámara mirando de frente al personaje
 		_:
@@ -286,6 +303,60 @@ func _glide() -> void:
 		_mark["camera_turn_deg"] = snappedf(rad_to_deg(w.psi - float(_mark["_cam_psi0"])), 0.1)
 		_mark.erase("_cam_psi0")
 	_stats["glide"] = _mark
+
+
+# --- sm2: movimientos de Spider-Man 2 y parkour ------------------------------
+func _sm2() -> void:
+	# 1) Loop de Loop: picada rápida y clic.
+	if _at(0.02):
+		_place(Vector3(0.0, 120.0, 60.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+		player.velocity = Vector3(0.0, -8.0, -24.0)
+	_press("dive", _t > 0.1 and _t < 2.2)
+	# 2) Spider-Dash y 3) Spider-Jump en el aire.
+	if _at(5.5):
+		_place(Vector3(0.0, 150.0, 60.0), Vector3.FORWARD)
+		player.state = TraversalController.State.FALL
+		player.velocity = Vector3(0.0, 0.0, -15.0)
+		player.spider_meter = 2.0
+	if _at(5.7):
+		_tap("spider_dash")
+	if _at(6.6):
+		_tap("spider_jump")
+	if _at(6.7):
+		_mark["meter_after"] = snappedf(player.spider_meter, 0.01)
+	# 4) Vault: correr hacia un aire acondicionado de azotea.
+	var units: Array[AABB] = main.city.roof_ac_units
+	if _at(8.0) and not units.is_empty():
+		var u := units[0]
+		var c := u.get_center()
+		_place(Vector3(c.x, u.position.y + 0.95, c.z + u.size.z * 0.5 + 5.0), Vector3.FORWARD)
+		_mark["vault_target_h"] = snappedf(u.size.y, 0.01)
+	_press("move_forward", (_t > 8.1 and _t < 9.5) or (_t > 10.1 and _t < 14.0))
+	# 5) Salto de borde: esprintar hacia el borde de una azotea amplia.
+	if _at(10.0):
+		var roof := _open_roof()
+		if not roof.is_empty():
+			_place(Vector3(roof[0] + roof[2] * 0.5, roof[4] + 0.95, roof[1] + roof[3] * 0.5), Vector3.LEFT)
+			_mark["ledge_roof_h"] = snappedf(roof[4], 0.1)
+	_press("swing", (_t > 1.6 and _t < 5.0) or (_t > 10.1 and _t < 14.0))
+	_stats["sm2"] = _mark
+
+
+## Azotea sin obstáculos en la mitad oeste (para probar el salto de borde).
+func _open_roof() -> Array:
+	var city: CityBuilder = main.city
+	for r: Array in city._roof_rects:
+		if r[2] < 16.0 or r[3] < 12.0 or r[4] < 20.0 or r[4] > 70.0:
+			continue
+		var clear := true
+		for u in city.roof_ac_units:
+			if absf(u.get_center().z - (r[1] + r[3] * 0.5)) < 3.0 and u.get_center().x < r[0] + r[2] * 0.5 \
+					and u.get_center().x > r[0] and absf(u.position.y - r[4]) < 0.1:
+				clear = false
+		if clear:
+			return r
+	return []
 
 
 func _open_direction(from: Vector3, dist: float) -> Vector3:

@@ -36,6 +36,7 @@ const STATE_NODES := {
 	TraversalController.State.PERCH: "Perch",
 	TraversalController.State.GLIDE: "Glide",
 	TraversalController.State.SLINGSHOT: "Slingshot",
+	TraversalController.State.VAULT: "Vault",
 }
 
 @export var controller: TraversalController
@@ -288,8 +289,16 @@ func _update_orientation(delta: float) -> void:
 			up = (Vector3.UP - c.slingshot_aim * 0.35 * c.slingshot_charge).normalized()
 			rate = 12.0
 		TraversalController.State.FALL, TraversalController.State.WEB_ZIP:
-			# Inclinación hacia la aceleración percibida (overlap del torso).
-			up = (Vector3.UP + RegulatedPendulum.flat(v) * 0.015).normalized()
+			if c.dash_timer > 0.0:
+				# Spider-Dash: en horizontal, cabeza hacia la velocidad y pecho abajo.
+				up = RegulatedPendulum.safe_normalized(v, c.travel_dir)
+				fwd = RegulatedPendulum.project_on_plane(Vector3.DOWN, up)
+				if fwd.length_squared() < 1e-4:
+					fwd = c.travel_dir
+				rate = orient_rate_swing
+			else:
+				# Inclinación hacia la aceleración percibida (overlap del torso).
+				up = (Vector3.UP + RegulatedPendulum.flat(v) * 0.015).normalized()
 	var target := Quaternion(basis_from(fwd, up))
 	var gt := visual_root.global_transform
 	var current := Quaternion(gt.basis.orthonormalized())

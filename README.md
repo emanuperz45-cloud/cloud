@@ -8,7 +8,8 @@ corrientes ascendentes y el **Super Slingshot** de *Spider-Man 2*.
 - **Documento de diseño:** [`docs/DISENO_SISTEMA_BALANCEO.md`](docs/DISENO_SISTEMA_BALANCEO.md)
 - **Física, simulador y baker de Blender (Python):** [`tools/swing_lab/`](tools/swing_lab)
 - **Runtime para Godot 4.3+ (GDScript):** [`godot/swing_system/`](godot/swing_system)
-- **Demo jugable (proyecto Godot 4.7):** [`godot/`](godot) — ciudad procedural + personaje; exporta a `.exe`
+- **Demo jugable (proyecto Godot 4.7):** [`godot/`](godot) — ciudad procedural + personaje con cuerpo continuo y piel; exporta a `.exe`
+- **Horneado del cuerpo:** [`tools/body_baker/`](tools/body_baker) — malla anatómica por SDF + marching cubes con pesos de piel
 
 ## Uso rápido
 
@@ -44,6 +45,9 @@ godot --headless --path godot --fixed-fps 60 -- --autopilot=23 --scenario=moves 
 godot --headless --path godot --fixed-fps 60 -- --autopilot=20 --scenario=glide  # Web Wings y viento
 godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sling  # Slingshot y loop
 godot --headless --path godot --fixed-fps 60 -- --autopilot=4 --scenario=run     # sprint con curva
+godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sm2    # loop, dash, jump, vault, borde
+# Regenerar el cuerpo con piel (numpy + scikit-image):
+python3 tools/body_baker/bake_body.py
 ```
 
 Controles (moveset del original, ver §2.0 del documento):
@@ -56,7 +60,10 @@ Controles (moveset del original, ver §2.0 del documento):
 | Sprint (suelo) / correr por la pared (sin clic se trepa) | Clic izq. mantenido | RT / R2 |
 | Picada / girar una esquina corriendo por la pared | Mayús | B |
 | Point zip al punto amarillo | Q o clic derecho | LT / L2 |
-| Trucos según dirección; **mantenido en un balanceo rápido = loop** | F + WASD | LB + stick |
+| Trucos según dirección (recargan el medidor); mantenido en un balanceo rápido = cierra el arco | F + WASD | LB + stick |
+| **Loop de Loop** (*SM2*): picada y balanceo; al completar la vuelta sale disparado | Mayús + clic | B + RT |
+| **Spider-Dash** / **Spider-Jump** (*SM2*): gastan una carga del medidor (barras abajo) | C / V | R3 / L3 |
+| Parkour: esprintando salta solo los bordes de azotea y pasa por encima de obstáculos bajos | Clic + W | RT + stick |
 | **Web Wings** en el aire (otra vez = plegar): W picar, S frenar/subir, A/D girar (~97°/s); o gira la cámara con el ratón y vuela hacia donde miras; abrirlas en picada = impulso | G, Ctrl o rueda | Y |
 | **Super Slingshot**: mantener point zip y salto, soltar salto para lanzar (soltar point zip cancela) | Q + Espacio | LT + A |
 | Reaparecer / ayuda | R / H | Back / Start |

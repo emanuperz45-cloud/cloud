@@ -9,6 +9,8 @@ extends Node3D
 ## de posado (grupo "perch_points") para el Point Launch.
 ## Para las Web Wings añade túneles de viento sobre las avenidas (anillos azules +
 ## rayas que fluyen) y corrientes ascendentes sobre azoteas (columnas con rejilla).
+## Azoteas: aires acondicionados (obstáculos para el vault del parkour) y depósitos
+## de agua sobre patas (anclajes y puntos de posado), con su propio RNG.
 
 const BUILDING_SHADER := preload("res://demo/building.gdshader")
 const GROUND_SHADER := preload("res://demo/ground.gdshader")
@@ -39,6 +41,8 @@ var pitch: float:
 var building_count := 0
 var wind_field := WindField.new()
 var _roofs: Array[Vector4] = []      ## (x centro, altura, z centro, lado menor)
+var _roof_rects: Array[Array] = []   ## [x, z, sx, sz, h]
+var roof_ac_units: Array[AABB] = []  ## aires acondicionados (para pruebas del vault)
 var _body: StaticBody3D
 var _transforms: Array[Transform3D] = []
 var _colors: Array[Color] = []
@@ -64,6 +68,7 @@ func build(seed_value: int) -> void:
 			_build_block(x0, z0, downtown)
 	_build_multimesh()
 	_build_wind(seed_value)
+	_build_roof_props(seed_value)
 
 
 func _build_ground() -> void:
@@ -130,6 +135,7 @@ func _add_building(x: float, z: float, sx: float, sz: float, h: float) -> void:
 	_body.add_child(shape)
 	building_count += 1
 	_roofs.append(Vector4(center.x, h, center.z, minf(sx, sz)))
+	_roof_rects.append([x, z, sx, sz, h])
 
 	# Puntos de posado en esquinas de azotea (dentro del borde, de pie sobre el tejado).
 	if h > 25.0 and _rng.randf() < 0.55:
@@ -260,3 +266,97 @@ func _wind_tube(center: Vector3, basis: Basis, radius: float, height: float, tin
 	mi.transform = Transform3D(basis, center)
 	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	add_child(mi)
+
+
+# ---------------------------------------------------------------------------
+# Azoteas: aires acondicionados y depósitos de agua
+# ---------------------------------------------------------------------------
+func _build_roof_props(seed_value: int) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = seed_value + 13
+	var ac: Array[Transform3D] = []
+	var tanks: Array[Transform3D] = []
+	var cones: Array[Transform3D] = []
+	var legs: Array[Transform3D] = []
+	for r: Array in _roof_rects:
+		var x: float = r[0]
+		var z: float = r[1]
+		var sx: float = r[2]
+		var sz: float = r[3]
+		var h: float = r[4]
+		if sx < 8.0 or sz < 8.0:
+			continue
+		if rng.randf() < 0.5:
+			for i in rng.randi_range(1, 3):
+				var size := Vector3(1.8, 1.1, 1.2) if rng.randf() < 0.5 else Vector3(1.2, 1.1, 1.8)
+				var p := Vector3(x + rng.randf_range(2.5, sx - 2.5), h + size.y * 0.5, z + rng.randf_range(2.5, sz - 2.5))
+				ac.append(Transform3D(Basis.from_scale(size), p))
+				roof_ac_units.append(AABB(p - size * 0.5, size))
+				_add_box(p, size)
+		if sx >= 14.0 and sz >= 14.0 and rng.randf() < 0.16:
+			# Depósito de agua: tanque de madera sobre 4 patas y tejado cónico.
+			var c := Vector3(x + rng.randf_range(4.0, sx - 4.0), h, z + rng.randf_range(4.0, sz - 4.0))
+			var leg_h := 2.6
+			for k in 4:
+				var off := Vector3(1.5 if k % 2 == 0 else -1.5, 0.0, 1.5 if k < 2 else -1.5)
+				var lp := c + off + Vector3.UP * leg_h * 0.5
+				legs.append(Transform3D(Basis.from_scale(Vector3(0.28, leg_h, 0.28)), lp))
+				_add_box(lp, Vector3(0.28, leg_h, 0.28))
+			var tank_c := c + Vector3.UP * (leg_h + 1.7)
+			tanks.append(Transform3D(Basis.IDENTITY, tank_c))
+			var cyl := CylinderShape3D.new()
+			cyl.radius = 2.2
+			cyl.height = 3.4
+			var cs := CollisionShape3D.new()
+			cs.shape = cyl
+			cs.position = tank_c
+			_body.add_child(cs)
+			cones.append(Transform3D(Basis.IDENTITY, tank_c + Vector3.UP * 2.3))
+			var perch := Marker3D.new()
+			perch.position = tank_c + Vector3.UP * (1.7 + 1.2 + 0.95)
+			perch.add_to_group("perch_points")
+			add_child(perch)
+	var box := BoxMesh.new()
+	_props_multimesh("RoofAC", box, ac, Color(0.62, 0.64, 0.66), 0.45)
+	var tank := CylinderMesh.new()
+	tank.top_radius = 2.2
+	tank.bottom_radius = 2.2
+	tank.height = 3.4
+	tank.radial_segments = 20
+	_props_multimesh("WaterTanks", tank, tanks, Color(0.46, 0.31, 0.2), 0.85)
+	var cone := CylinderMesh.new()
+	cone.top_radius = 0.15
+	cone.bottom_radius = 2.4
+	cone.height = 1.2
+	cone.radial_segments = 20
+	_props_multimesh("WaterTankRoofs", cone, cones, Color(0.2, 0.19, 0.19), 0.7)
+	_props_multimesh("WaterTankLegs", BoxMesh.new(), legs, Color(0.16, 0.15, 0.15), 0.6)
+
+
+func _add_box(p: Vector3, size: Vector3) -> void:
+	var b := BoxShape3D.new()
+	b.size = size
+	var cs := CollisionShape3D.new()
+	cs.shape = b
+	cs.position = p
+	_body.add_child(cs)
+
+
+func _props_multimesh(node_name: String, mesh: Mesh, xf: Array[Transform3D], color: Color,
+		rough: float) -> void:
+	if xf.is_empty():
+		return
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = rough
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.mesh = mesh
+	mm.instance_count = xf.size()
+	for i in xf.size():
+		mm.set_instance_transform(i, xf[i])
+	var mmi := MultiMeshInstance3D.new()
+	mmi.name = node_name
+	mmi.multimesh = mm
+	mmi.material_override = mat
+	add_child(mmi)

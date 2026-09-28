@@ -11,6 +11,7 @@ const CITY_SEED := 20180907
 const SPAWN := Vector3(0.0, 75.0, 40.0)
 
 var player: TraversalController
+var city: CityBuilder
 var camera_rig: CameraRig
 var hud: DemoHud
 
@@ -31,6 +32,7 @@ func _ready() -> void:
 	city.build(CITY_SEED)
 	_build_player()
 	player.wind_field = city.wind_field
+	self.city = city
 	camera_rig = CameraRig.new()
 	camera_rig.target = player
 	add_child(camera_rig)

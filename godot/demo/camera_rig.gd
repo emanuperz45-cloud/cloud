@@ -52,6 +52,9 @@ func _ready() -> void:
 	target.jumped.connect(func(c: float) -> void: punch(c * 8.0))
 	target.quick_recovered.connect(func() -> void: punch(5.0))
 	target.looped.connect(func(_n: int) -> void: punch(6.0))
+	target.loop_boosted.connect(func() -> void: punch(12.0))
+	target.spider_dashed.connect(func() -> void: punch(10.0))
+	target.spider_jumped.connect(func() -> void: punch(7.0))
 	target.landed.connect(func(impact: float) -> void:
 		_shake = maxf(_shake, clampf((impact - 20.0) / 30.0, 0.0, 1.0) * 0.12))
 	target.state_changed.connect(func(_a: int, b: int) -> void:
