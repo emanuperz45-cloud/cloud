@@ -7,51 +7,41 @@ const STATE_NAMES := [
 	"SUELO", "CAÍDA", "PICADA", "BALANCEO", "WEB ZIP", "POINT ZIP", "POSADO", "WALL RUN",
 	"PLANEO", "SLINGSHOT", "VAULT",
 ]
-const HELP := """\
-CLIC IZQ / R2 mantenido: balanceo en la misma telaraña (si no sueltas, te quedas colgado)
-   colgado: W/S subir o bajar por la telaraña · suelta el clic para caer
-ESPACIO / A: en el balanceo salta (abajo = adelante, al final = arriba) · en el aire = Web Zip
-   en el suelo: mantén para Charge Jump · al rodar tras aterrizar = Quick Recovery
-SUELO: clic mantenido = sprint (contra una fachada sube corriendo) · salta con clic = telaraña
-PARED: con clic corres, sin clic trepas · ESPACIO tira hacia arriba o salta de la pared
-MAYÚS / B: picada · en una esquina corriendo, gira la esquina con una telaraña
-   PICADA + CLIC: LOOP DE LOOP (vuelta completa y sale disparado)
-C / R3: SPIDER-DASH · V / L3: SPIDER-JUMP (gastan una carga del medidor; los trucos recargan)
-SPRINT: salta solo los bordes de azotea y pasa por encima de obstáculos bajos
-G, CTRL, RUEDA / Y en el aire: WEB WINGS · W picar, S subir, A/D girar (o apunta con el ratón)
-   ábrelas en picada = impulso · anillos azules = túnel de viento · columnas = corriente
-Q, CLIC DER / L2: point zip al punto amarillo, ESPACIO al llegar = Point Launch
-   Q + ESPACIO mantenidos (suelo, posado, pared): SUPER SLINGSHOT, suelta ESPACIO
-F / LB + dirección: trucos · mantenido en un balanceo rápido: cierra el arco (loop)
-R: reaparecer · ESC: ratón · H: mostrar u ocultar esta ayuda"""
+## Controles: siempre a la vista en una franja compacta abajo (H la oculta/muestra).
+const CONTROLS := [
+	["Clic izq · RT", "Balanceo (mantén = colgarte)"],
+	["Espacio · A", "Salto · en el aire: web zip"],
+	["WASD · Stick", "Moverte · colgado: subir/bajar"],
+	["Mayús · B", "Picada · + clic: Loop de Loop"],
+	["Q · LT", "Point zip · + Espacio: Slingshot"],
+	["G · Y", "Alas: planear (ratón = girar)"],
+	["F · LB", "Truco en el aire"],
+	["E · X", "Web zip"],
+	["C · R3", "Spider-Dash"],
+	["V · L3", "Spider-Jump"],
+	["R · Back", "Reaparecer"],
+	["H · Start", "Ocultar esta ayuda"],
+]
 
 var controller: TraversalController
 var camera_rig: CameraRig
 
 var _stats: Label
 var _banner: Label
-var _help: Label
+var _help: PanelContainer
 var _reticle: Control
 var _banner_time := 0.0
-var _help_auto_hide := 15.0       ## la ayuda se oculta sola (H la vuelve a mostrar)
 var _perch: Variant = null
 
 
 func _ready() -> void:
 	layer = 2
-	_stats = _label(22, Vector2(24, 20))
+	_stats = _label(18, Vector2(20, 14))
 	_banner = _label(40, Vector2.ZERO)
 	_banner.anchor_right = 1.0
 	_banner.offset_top = 140.0
 	_banner.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
-	_help = _label(17, Vector2.ZERO)
-	_help.anchor_top = 1.0
-	_help.anchor_bottom = 1.0
-	_help.offset_left = 24.0
-	_help.offset_top = -470.0
-	_help.offset_bottom = -16.0
-	_help.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
-	_help.text = HELP
+	_help = _build_controls()
 	_reticle = Control.new()
 	_reticle.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	_reticle.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -76,7 +66,43 @@ func _ready() -> void:
 
 func set_help_visible(v: bool) -> void:
 	_help.visible = v
-	_help_auto_hide = 0.0
+
+
+## Franja de controles: 3 parejas "tecla · acción" por fila, texto pequeño sobre un
+## fondo translúcido en la esquina inferior izquierda (~70 px de alto).
+func _build_controls() -> PanelContainer:
+	var panel := PanelContainer.new()
+	var style := StyleBoxFlat.new()
+	style.bg_color = Color(0.0, 0.0, 0.0, 0.45)
+	style.set_corner_radius_all(6)
+	style.content_margin_left = 10.0
+	style.content_margin_right = 10.0
+	style.content_margin_top = 5.0
+	style.content_margin_bottom = 5.0
+	panel.add_theme_stylebox_override("panel", style)
+	panel.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var grid := GridContainer.new()
+	grid.columns = 6
+	grid.add_theme_constant_override("h_separation", 8)
+	grid.add_theme_constant_override("v_separation", 1)
+	panel.add_child(grid)
+	for pair: Array in CONTROLS:
+		for i in 2:
+			var l := Label.new()
+			l.text = pair[i]
+			l.add_theme_font_size_override("font_size", 13)
+			l.add_theme_color_override("font_color", Color(1.0, 0.82, 0.3) if i == 0 else Color(1, 1, 1, 0.92))
+			l.add_theme_color_override("font_outline_color", Color(0, 0, 0, 0.8))
+			l.add_theme_constant_override("outline_size", 3)
+			l.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			grid.add_child(l)
+	add_child(panel)
+	panel.anchor_top = 1.0
+	panel.anchor_bottom = 1.0
+	panel.offset_left = 12.0
+	panel.offset_bottom = -10.0
+	panel.grow_vertical = Control.GROW_DIRECTION_BEGIN
+	return panel
 
 
 func _label(size: int, pos: Vector2) -> Label:
@@ -108,13 +134,8 @@ func _process(delta: float) -> void:
 			int(c.global_position.y)]
 	_banner_time = maxf(_banner_time - delta, 0.0)
 	_banner.modulate.a = clampf(_banner_time / 0.4, 0.0, 1.0)
-	if _help_auto_hide > 0.0:
-		_help_auto_hide -= delta
-		if _help_auto_hide <= 0.0:
-			_help.visible = false
 	if Input.is_action_just_pressed("toggle_help"):
 		_help.visible = not _help.visible
-		_help_auto_hide = 0.0
 
 	_perch = null
 	if c.anchor_finder and c.state in [TraversalController.State.FALL, TraversalController.State.DIVE,
@@ -155,16 +176,17 @@ func _draw_reticle() -> void:
 	var cam := camera_rig.camera
 	var center := _reticle.size * 0.5
 	_reticle.draw_circle(center, 2.5, Color(1, 1, 1, 0.6))
-	# Medidor de Spider-Dash / Spider-Jump: una barra por carga, abajo al centro.
+	# Medidor de Spider-Dash / Spider-Jump: una barra por carga, bajo los datos
+	# de arriba a la izquierda (la franja de controles ocupa la parte de abajo).
 	var charges := int(controller.tuning.spider_meter_charges)
-	var bw := 70.0
-	var y := _reticle.size.y - 34.0
+	var bw := 56.0
+	var y := 44.0
 	for i in charges:
-		var x0 := center.x - (charges * (bw + 8.0)) * 0.5 + i * (bw + 8.0)
+		var x0 := 22.0 + i * (bw + 6.0)
 		var fill := clampf(controller.spider_meter - i, 0.0, 1.0)
-		_reticle.draw_rect(Rect2(x0, y, bw, 8.0), Color(0, 0, 0, 0.45))
+		_reticle.draw_rect(Rect2(x0, y, bw, 6.0), Color(0, 0, 0, 0.45))
 		var col := Color(0.95, 0.2, 0.2, 0.95) if fill >= 1.0 else Color(0.8, 0.8, 0.85, 0.6)
-		_reticle.draw_rect(Rect2(x0, y, bw * fill, 8.0), col)
+		_reticle.draw_rect(Rect2(x0, y, bw * fill, 6.0), col)
 	if _perch == null or cam.is_position_behind(_perch):
 		return
 	var p := cam.unproject_position(_perch)

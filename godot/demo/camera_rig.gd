@@ -116,6 +116,8 @@ func _process(delta: float) -> void:
 	var pitch_bias := 0.0
 	if gliding:
 		pitch_bias = clampf(target.wings.gamma * 0.45, -0.35, 0.2)
+	elif st == TraversalController.State.WALL_RUN and target.wall_vertical and not target.wall_crawl:
+		pitch_bias = 0.55                    # subiendo por la fachada: mirar hacia arriba
 	# Roll: en los virajes (alabeo de las alas o giro del balanceo) el horizonte se inclina.
 	var roll_target := 0.0
 	if gliding:

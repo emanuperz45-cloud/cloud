@@ -36,7 +36,8 @@ var _tapped: Array[String] = []
 
 
 func _ready() -> void:
-	hud.set_help_visible(false)          # capturas limpias
+	if not "--show-help" in OS.get_cmdline_user_args():
+		hud.set_help_visible(false)      # capturas limpias (salvo --show-help)
 	player.web_fired.connect(func(_h: int, a: Vector3) -> void:
 		_count("web_fired")
 		_anchor = a)

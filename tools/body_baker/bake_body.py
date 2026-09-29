@@ -30,19 +30,31 @@ from skimage import measure
 # ---------------------------------------------------------------------------
 # Esqueleto (idéntico a mannequin.gd): padre, desplazamiento en reposo
 # ---------------------------------------------------------------------------
-BONES = ["pelvis", "spine", "head", "sh_l", "el_l", "sh_r", "el_r", "hip_l", "kn_l", "hip_r", "kn_r"]
+# 19 huesos: columna en dos tramos (lumbar y pecho), cuello, clavículas (el hombro
+# sube al levantar el brazo), muñecas y tobillos (manos y pies con su propia pose).
+BONES = ["pelvis", "spine", "chest", "neck", "head",
+         "cl_l", "sh_l", "el_l", "wr_l", "cl_r", "sh_r", "el_r", "wr_r",
+         "hip_l", "kn_l", "ank_l", "hip_r", "kn_r", "ank_r"]
 REST = {
     "pelvis": (None, (0.0, 0.0, 0.0)),
     "spine": ("pelvis", (0.0, 0.06, 0.0)),
-    "head": ("spine", (0.0, 0.60, 0.0)),
-    "sh_r": ("spine", (-0.23, 0.47, 0.0)),
+    "chest": ("spine", (0.0, 0.20, 0.0)),
+    "neck": ("chest", (0.0, 0.30, 0.0)),
+    "head": ("neck", (0.0, 0.10, 0.0)),
+    "cl_r": ("chest", (-0.03, 0.24, 0.0)),
+    "sh_r": ("cl_r", (-0.20, 0.03, 0.0)),
     "el_r": ("sh_r", (0.0, -0.30, 0.0)),
-    "sh_l": ("spine", (0.23, 0.47, 0.0)),
+    "wr_r": ("el_r", (0.0, -0.27, 0.0)),
+    "cl_l": ("chest", (0.03, 0.24, 0.0)),
+    "sh_l": ("cl_l", (0.20, 0.03, 0.0)),
     "el_l": ("sh_l", (0.0, -0.30, 0.0)),
+    "wr_l": ("el_l", (0.0, -0.27, 0.0)),
     "hip_r": ("pelvis", (-0.095, -0.05, 0.0)),
     "kn_r": ("hip_r", (0.0, -0.43, 0.0)),
+    "ank_r": ("kn_r", (0.0, -0.42, 0.0)),
     "hip_l": ("pelvis", (0.095, -0.05, 0.0)),
     "kn_l": ("hip_l", (0.0, -0.43, 0.0)),
+    "ank_l": ("kn_l", (0.0, -0.42, 0.0)),
 }
 ARM_BIND_DEG = 80.0
 LEG_BIND_DEG = 8.0
@@ -116,15 +128,19 @@ def primitives() -> dict[str, list]:
     P["spine"] += [
         (E, (0.0, 0.09, 0.006), (0.138, 0.14, 0.1)),              # abdomen
         (E, (0.0, 0.2, 0.0), (0.155, 0.13, 0.104)),               # cintura/costillas bajas
-        (E, (0.0, 0.305, 0.0), (0.182, 0.168, 0.115)),            # caja torácica
-        (E, (0.0, 0.295, -0.03), (0.192, 0.155, 0.098)),          # dorsales
-        (C, (-0.165, 0.435, -0.012), (0.165, 0.435, -0.012), 0.062, 0.062),   # trapecios
+    ]
+    P["chest"] += [                                               # (origen 0,20 m sobre la lumbar)
+        (E, (0.0, 0.105, 0.0), (0.182, 0.168, 0.115)),            # caja torácica
+        (E, (0.0, 0.095, -0.03), (0.192, 0.155, 0.098)),          # dorsales
+        (C, (-0.165, 0.235, -0.012), (0.165, 0.235, -0.012), 0.062, 0.062),   # trapecios
     ]
     for sgn in (-1.0, 1.0):
-        P["spine"].append((E, (sgn * 0.074, 0.335, 0.056), (0.082, 0.058, 0.052)))      # pectorales
+        P["chest"].append((E, (sgn * 0.074, 0.135, 0.056), (0.082, 0.058, 0.052)))      # pectorales
         P["spine"].append((E, (sgn * 0.05, 0.13, 0.062), (0.05, 0.075, 0.035)))         # oblicuos/abdominales
+    P["neck"] += [
+        (C, (0.0, -0.03, -0.006), (0.0, 0.13, 0.0), 0.054, 0.049),                      # cuello
+    ]
     P["head"] += [
-        (C, (0.0, -0.13, -0.006), (0.0, 0.03, 0.0), 0.054, 0.049),                      # cuello
         (E, (0.0, 0.12, 0.004), (0.096, 0.12, 0.11)),                                    # cráneo
         (E, (0.0, 0.058, 0.035), (0.07, 0.058, 0.074)),                                  # mandíbula
     ]
@@ -138,8 +154,10 @@ def primitives() -> dict[str, list]:
         P["el_" + side] += [
             (C, (0.0, 0.0, 0.0), (0.0, -0.26, 0.0), 0.048, 0.034),                       # antebrazo
             (E, (0.0, -0.07, 0.004), (0.049, 0.08, 0.046)),                              # musculatura
-            (E, (0.0, -0.345, 0.0), (0.023, 0.058, 0.044)),                              # mano
-            (C, (sgn * -0.004, -0.30, 0.034), (sgn * -0.004, -0.355, 0.056), 0.014, 0.011),  # pulgar
+        ]
+        P["wr_" + side] += [                                                             # (origen: muñeca)
+            (E, (0.0, -0.075, 0.0), (0.023, 0.058, 0.044)),                              # mano
+            (C, (sgn * -0.004, -0.03, 0.034), (sgn * -0.004, -0.085, 0.056), 0.014, 0.011),  # pulgar
         ]
         P["hip_" + side] += [
             (C, (0.0, 0.02, 0.0), (0.0, -0.42, 0.0), 0.088, 0.058),                      # fémur
@@ -150,17 +168,26 @@ def primitives() -> dict[str, list]:
             (E, (0.0, 0.0, 0.012), (0.058, 0.06, 0.058)),                                # rodilla
             (C, (0.0, 0.0, 0.0), (0.0, -0.41, 0.0), 0.053, 0.035),                       # tibia
             (E, (0.0, -0.13, -0.03), (0.058, 0.105, 0.06)),                              # gemelo
-            (C, (0.0, -0.425, -0.025), (0.0, -0.452, 0.135), 0.043, 0.031),              # pie
+        ]
+        P["ank_" + side] += [                                                            # (origen: tobillo)
+            (C, (0.0, -0.005, -0.025), (0.0, -0.032, 0.135), 0.043, 0.031),              # pie
         ]
     return P
 
 
 # Suavidad de la unión dentro de cada hueso: el tronco se funde mucho más que las
 # extremidades (sin "cuentas" entre pecho, abdomen y cadera).
-BONE_K = {"pelvis": 0.07, "spine": 0.07, "head": 0.04}
+BONE_K = {"pelvis": 0.07, "spine": 0.07, "chest": 0.07, "neck": 0.04, "head": 0.04}
+# Uniones entre huesos: primero las parejas que deben fundirse como una sola pieza
+# (con su propia suavidad), luego todo junto con k = 5 cm.
+GROUPS = [(("spine", "chest"), 0.07), (("neck", "head"), 0.04),
+          (("el_l", "wr_l"), 0.022), (("el_r", "wr_r"), 0.022),
+          (("kn_l", "ank_l"), 0.022), (("kn_r", "ank_r"), 0.022)]
 
 
 def eval_bone(prims: list, p_local: np.ndarray, k: float = 0.025) -> np.ndarray:
+    if not prims:
+        return np.full(p_local.shape[:-1], np.inf)     # hueso sin volumen (clavícula)
     d = None
     for pr in prims:
         if pr[0] == "e":
@@ -181,9 +208,18 @@ def bone_distances(p: np.ndarray, G, P) -> dict[str, np.ndarray]:
 
 
 def blend(dists: dict[str, np.ndarray], k: float = 0.05) -> np.ndarray:
+    parts = []
+    grouped = set()
+    for names, kg in GROUPS:
+        g = None
+        for b in names:
+            g = dists[b] if g is None else smin(g, dists[b], kg)
+            grouped.add(b)
+        parts.append(g)
+    parts += [dists[b] for b in BONES if b not in grouped and np.isfinite(dists[b]).any()]
     d = None
-    for b in BONES:
-        d = dists[b] if d is None else smin(d, dists[b], k)
+    for part in parts:
+        d = part if d is None else smin(d, part, k)
     return d
 
 
@@ -220,8 +256,8 @@ def bake(voxel: float):
     dists = bone_distances(verts, G, P)
     d_tot = sdf(verts)
     D = np.stack([dists[b] for b in BONES], axis=-1) - d_tot[:, None]
-    W = np.exp(-np.maximum(D, 0.0) / 0.012)
-    W[D > 0.06] = 0.0
+    W = np.exp(-np.maximum(np.nan_to_num(D, posinf=1.0), 0.0) / 0.012)
+    W[~(D <= 0.06)] = 0.0
     W /= W.sum(-1, keepdims=True)
     nv = len(verts)
     rows = np.concatenate([faces[:, 0], faces[:, 1], faces[:, 2], faces[:, 1], faces[:, 2], faces[:, 0]])

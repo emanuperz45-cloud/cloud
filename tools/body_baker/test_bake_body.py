@@ -35,7 +35,14 @@ class BakeBodyTests(unittest.TestCase):
         # La mano derecha solo depende del brazo derecho.
         hand = self.verts[:, 0] < -0.8
         bones = set(np.array(bake_body.BONES)[self.idx[hand][self.w4[hand] > 0.05]])
-        self.assertLessEqual(bones, {"sh_r", "el_r"})
+        self.assertLessEqual(bones, {"el_r", "wr_r"})
+        self.assertIn("wr_r", bones)
+
+    def test_every_posable_bone_has_skin(self):
+        used = set(np.array(bake_body.BONES)[self.idx[self.w4 > 0.3]])
+        for b in bake_body.BONES:
+            if not b.startswith("cl_"):                     # las clavículas no tienen volumen
+                self.assertIn(b, used)
 
     def test_faces_wind_clockwise_for_godot(self):
         v0, v1, v2 = (self.verts[self.faces[:, i]] for i in range(3))

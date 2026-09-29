@@ -269,10 +269,15 @@ func _update_orientation(delta: float) -> void:
 				# Gateando: pegado a la fachada, cabeza arriba, pecho contra la pared.
 				up = RegulatedPendulum.project_on_plane(Vector3.UP, c.wall_normal).normalized()
 				fwd = -c.wall_normal
+			elif c.wall_vertical:
+				# Subiendo por la fachada: casi paralelo a ella (echado 17° hacia fuera),
+				# de cara a la pared, pisándola.
+				up = (Vector3.UP + c.wall_normal * 0.3).normalized()
+				fwd = -c.wall_normal
 			else:
-				# Corriendo: la pared es el "suelo" y el ciclo de carrera se rota.
+				# Corriendo en horizontal: la pared es el "suelo" y el ciclo de carrera se rota.
 				up = c.wall_normal
-				fwd = Vector3.UP if c.wall_vertical else RegulatedPendulum.safe_normalized(
+				fwd = RegulatedPendulum.safe_normalized(
 						RegulatedPendulum.project_on_plane(v, c.wall_normal), fwd)
 			rate = orient_rate_swing
 		TraversalController.State.GLIDE:
@@ -284,9 +289,9 @@ func _update_orientation(delta: float) -> void:
 			fwd = fwd.normalized().rotated(up, -c.wings.bank)
 			rate = 10.0
 		TraversalController.State.SLINGSHOT:
-			# Tensado: de cara al lanzamiento, echado hacia atrás con la carga.
+			# Tensado: de cara al lanzamiento (el cuerpo se echa atrás en la postura,
+			# con los pies plantados).
 			fwd = c.slingshot_aim
-			up = (Vector3.UP - c.slingshot_aim * 0.35 * c.slingshot_charge).normalized()
 			rate = 12.0
 		TraversalController.State.FALL, TraversalController.State.WEB_ZIP:
 			if c.dash_timer > 0.0:
@@ -297,13 +302,28 @@ func _update_orientation(delta: float) -> void:
 					fwd = c.travel_dir
 				rate = orient_rate_swing
 			else:
-				# Inclinación hacia la aceleración percibida (overlap del torso).
+				# Inclinación hacia la aceleración percibida y, al caer rápido, boca abajo
+				# como un paracaidista (la postura AIR_FALL está pensada para eso).
 				up = (Vector3.UP + RegulatedPendulum.flat(v) * 0.015).normalized()
+				var prone := smoothstep(12.0, 32.0, -v.y) * 0.8
+				if prone > 0.0 and c.state == TraversalController.State.FALL:
+					var head := RegulatedPendulum.safe_normalized(RegulatedPendulum.flat(v), c.travel_dir)
+					up = up.lerp(head, prone).normalized()
+					fwd = fwd.lerp(Vector3.DOWN, prone)
 	var target := Quaternion(basis_from(fwd, up))
 	var gt := visual_root.global_transform
 	var current := Quaternion(gt.basis.orthonormalized())
 	gt.basis = Basis(current.slerp(target, 1.0 - exp(-rate * delta)))
 	visual_root.global_transform = gt
+	# Desplazamiento visual en la pared: la cápsula queda a 0,4 m de la fachada;
+	# corriendo, los pies deben tocarla (cadera a 0,9 m) y gateando, el pecho (0,2 m).
+	var offset := Vector3.ZERO
+	if c.state == TraversalController.State.WALL_RUN:
+		if c.wall_crawl:
+			offset = -c.wall_normal * 0.2
+		elif not c.wall_vertical:
+			offset = c.wall_normal * 0.5
+	visual_root.position = visual_root.position.lerp(offset, 1.0 - exp(-12.0 * delta))
 
 
 # ---------------------------------------------------------------------------

@@ -48,9 +48,13 @@ godot --headless --path godot --fixed-fps 60 -- --autopilot=4 --scenario=run    
 godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sm2    # loop, dash, jump, vault, borde
 # Regenerar el cuerpo con piel (numpy + scikit-image):
 python3 tools/body_baker/bake_body.py
+# Hoja de fotogramas de una animación (sin la ciudad; casos en docs, apéndice C.2):
+xvfb-run godot --path godot --rendering-driver opengl3 --fixed-fps 60 --resolution 560x640 \
+    --script res://demo/anim_lab.gd -- --case=sprint --view=side --out=sprint.png
 ```
 
-Controles (moveset del original, ver §2.0 del documento):
+Controles (moveset del original, ver §2.0 del documento). En el juego están siempre a la
+vista en una franja compacta abajo a la izquierda (H la oculta o la vuelve a mostrar):
 
 | Acción | Teclado y ratón | Mando |
 |---|---|---|

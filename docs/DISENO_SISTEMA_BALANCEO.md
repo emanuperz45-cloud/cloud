@@ -654,7 +654,7 @@ En wall run, rayo desde cada cadera hacia $-\hat{\mathbf m}$ (1,6 m); target = i
 | **Stretch** (disparo y ápice) | `Swing_Fire` (brazo en extensión total 2 frames *antes* de que la web llegue) + pose `Apex` extendida | $\varphi\to\pm1$ |
 | **Anticipación** | Cabeza hacia el próximo anclaje en la subida; 2–3 frames de recogida antes del Fire | $\varphi\ge0{,}2$ |
 | **Limpieza** | Nada oscila a más de ~3 Hz en el cuerpo (a 60 fps una oscilación de 20–30 Hz se ve como vibración): vaivén lento de 2–3 Hz en caída, picada y planeo; muelles de articulación casi críticos ($\zeta=0{,}85$ extremidades, 1 tronco) | — |
-| **Carrera** | Cadencia 1,1→1,7 ciclos/s con la velocidad; la velocidad sale de la amplitud de la zancada (30°→62°); pierna de apoyo casi recta, talón al glúteo al esprintar; rebote de cadera dos veces por ciclo; contrarrotación hombros/cadera ±10°; inclinación hacia delante 4°→26° | $v$ |
+| **Carrera** | Generador de pasos con IK (§3.7): 1,1→2,7 ciclos/s, fase de apoyo del 60 % (andar) al 30 % (sprint), pie de apoyo quieto sobre el suelo, talón al glúteo y rodilla alta al esprintar, despegue de punta; rebote de cadera dos veces por ciclo; contrarrotación hombros/cadera; inclinación 6°→24° | $v$ |
 | **Inclinación en curvas** | Corriendo, la pelvis rueda $-0{,}7\arctan(\omega v/g)$ hacia dentro (aceleración centrípeta real); en el swing, 18° con el stick | $\omega=\dot\psi$, $v$ |
 | **Overlap / follow-through** | Retrasos de fase por grupo en el baker (piernas 3–4 f, brazos 1 f, cabeza −2 f); en runtime, cada articulación sigue su pose con un muelle amortiguado semi-implícito sobre el cuaternión ($\omega=$ rate, $\zeta=0{,}85$ en extremidades y $1$ en tronco/cabeza): cambios de pose suaves y con peso, sin rebotes que parezcan temblor (implementado en el maniquí de la demo) | aceleración de la raíz |
 | **Arcos** | La trayectoria **es** un arco físico; los clips se hornean sobre ese arco real (§4.2) | $\mathbf p(t)$ |
@@ -668,13 +668,26 @@ En wall run, rayo desde cada cadera hacia $-\hat{\mathbf m}$ (1,6 m); target = i
 
 El maniquí de piezas se sustituye por **una sola malla con piel** generada por `tools/body_baker/bake_body.py`:
 
-1. **Forma.** Unión suave (*smooth-min*, $k=7$ cm en el tronco, 2,5 cm en extremidades, 5 cm entre huesos) de 40 volúmenes anatómicos atados a los 11 huesos del maniquí: caja torácica, pectorales, dorsales, trapecios, abdomen y oblicuos, glúteos, deltoides, bíceps, tríceps, antebrazos, manos con pulgar, cuádriceps, isquios, rodillas, gemelos, pies, cuello, cráneo y mandíbula.
+1. **Forma.** Unión suave (*smooth-min*, $k=7$ cm en el tronco, 2,2–2,5 cm en extremidades, 5 cm entre huesos) de 40 volúmenes anatómicos atados a los **19 huesos** del esqueleto (pelvis, lumbar, pecho, cuello, cabeza, clavículas, brazos, antebrazos, muñecas, muslos, tibias y tobillos): caja torácica, pectorales, dorsales, trapecios, abdomen y oblicuos, glúteos, deltoides, bíceps, tríceps, antebrazos, manos con pulgar, cuádriceps, isquios, rodillas, gemelos, pies, cuello, cráneo y mandíbula.
 2. **Pose de enlace.** Se modela con los brazos abiertos 80° y las piernas 8° (así no se funden con el torso); el esqueleto de reposo del juego tiene los brazos abajo y la `Skin` guarda las inversas de las matrices de enlace.
 3. **Malla.** SDF muestreada a 12 mm → *marching cubes* → 20 222 vértices / 40 440 triángulos; normales del gradiente exacto de la SDF (sombreado suave); caras en sentido horario (convención de Godot).
 4. **Pesos.** "Propiedad" de cada hueso: $w_b\propto e^{-(d_b-d)/1{,}2\,\text{cm}}$ (cero a más de 6 cm), 4 pasadas de suavizado laplaciano sobre la malla y los 4 mayores. Las zonas de unión (hombro, cintura, cadera, cuello) mezclan huesos y no se pliegan.
 5. **Formato.** Binario compacto (573 KiB): posiciones u16, normales i8, huesos/pesos u8, índices u16 y matrices de enlace (`demo/body_mesh.gd` lo convierte en `ArrayMesh` + `Skin`).
 6. **Traje** (`demo/body.gdshader`), calculado en la posición de enlace (UV/UV2) para que vaya pegado a la piel: telaraña radial en pecho (centro en el esternón) y espalda, líneas longitudinales con anillos combados en brazos y piernas, telaraña radial en la máscara desde el entrecejo, lentes blancas en almendra con marco negro, araña negra en el pecho y otra grande en la espalda, costados más oscuros, microtextura hexagonal y relieve por derivadas. Las zonas se mezclan con pesos suaves (sin costuras).
 7. **Movimiento fluido.** Las poses se calculan a 60 Hz en la jerarquía lógica; en `_process` los huesos se interpolan entre los dos últimos pasos de física (slerp con la fracción de interpolación), así el cuerpo se mueve sin escalones a 120/144 Hz.
+
+### 3.7 Capa de animación de la demo (procedimental, verificada con hojas de contacto)
+
+| Pieza | Cómo funciona |
+|---|---|
+| **Canales** | Cada postura es un diccionario de ángulos sin bloqueo de ejes. Brazo: elevación (0 abajo, 90 horizontal, 180 arriba; negativa = atrás), azimut (hacia fuera), giro, codo y muñeca → $q_{hombro}=R_y(\pm az)\,R_x(-el)\,R_y(\pm giro)$ (la elevación actúa en el plano sagital y el azimut la lleva hacia fuera: con el brazo abierto 90° el "adelante" sigue funcionando). Pierna: flexión, abducción, giro, rodilla y tobillo → $q_{cadera}=R_x(-flex)\,R_z(\pm abd)\,R_y(\pm giro)$. Tronco en 3 tramos + cuello y cabeza. La clavícula sube sola con el brazo por encima de 75°. Espejo derecha/izquierda automático |
+| **Mezcla** | Posturas clave mezcladas por fase con Catmull-Rom (swing: 5 claves de −1 a 1) o por velocidad (aire: impulso → ápice → paracaidista), más capas aditivas (tijera en swing rápido, compresión por G) |
+| **Muelles** | Cada articulación sigue su objetivo con un muelle casi crítico; en carrera la rigidez sube a 45 s⁻¹ para no filtrar el braceo (un muelle de 16 s⁻¹ atenuaba el ciclo de 2,7 Hz) |
+| **IK de dos huesos** | Analítica, con polo para el codo/rodilla y orientación del extremo: pies plantados en el suelo (idle, carrera, posado, aterrizajes, slingshot), pies en la pared (carrera vertical) y manos y pies en la pared (gateo), mano sobre la web (swing, tirando con el codo doblado al engancharse), dos manos en la web (colgado, mano sobre mano al subir), manos al objetivo del zip, al anclaje del slingshot, al suelo (posado y aterrizaje de superhéroe) y a la cima del obstáculo (vault). Los pesos de IK entran y salen en ~0,15 s |
+| **Pasos** | La fase avanza con la cadencia; cada pie recorre apoyo (línea en el suelo, de +S/2 a −S/2, sin deslizar hasta $S=1{,}1$ m) y vuelo (Catmull-Rom por talón arriba → rodilla arriba → alcance → contacto). El mismo generador sirve en la pared (el cuerpo se desplaza 0,5 m para que los pies la toquen) y el gateo usa diagonales alternas a 4 apoyos |
+| **Acrobacias** | Anticipación (brazos arriba, 0–15 %), forma (agrupado, estirado con brazos al pecho, abierto en X, carpado) mientras gira con *smootherstep*, y apertura al final; puntas de pie estiradas en el aire |
+| **Orientación** | Swing: el eje del cuerpo sigue la web; caída rápida: boca abajo como paracaidista; dash y planeo: tumbado; pared: desplazamiento visual para que pies o pecho toquen la fachada |
+| **Laboratorio** | `godot/demo/anim_lab.gd` renderiza sin la ciudad hojas de fotogramas de cada movimiento (27 casos, vistas lateral, frontal, trasera y 3/4) para revisar y corregir las posturas |
 
 **Repertorio de animación de la demo** (todo procedimental): sueltas variadas como en el juego —voltereta agrupada, tirabuzón estirado, pirueta abierta, rueda lateral, mortal atrás, carpado; nunca la misma dos veces seguidas; la perfecta es doble o de giro y medio—, cada una con su postura (la postura se abre en el último 25 % del giro); tirón del brazo al engancharse (codo a 75° que se estira al tensarse la web); *spidey squat* al posarse (rodillas abiertas, mano apoyada entre los pies); idle con respiración, cambio de peso y mirada lenta; flexión al aterrizar suave; la cabeza mira hacia la velocidad en carrera, balanceo y caída; Spider-Dash en "vuelo" con un brazo delante; Spider-Jump estirado; vault con una mano apoyada y piernas al lado; salto de borde con voltereta.
 
@@ -1185,6 +1198,14 @@ Camera rig (SpringArm3D + Camera3D) → traversal_controller.camera
 ```
 
 InputMap: `move_left/right/forward/back`, `swing` (R2), `jump` (✕), `web_zip` (✕ en el aire o botón dedicado), `point_zip` (L2+R2), `dive` (○ mantenido), `trick` (□; mantenido en el swing = loop), `glide` (△ en el aire: Web Wings). Para el viento: `controller.wind_field = WindField` con `add_tunnel(a, b, r)` / `add_updraft(base, h, r)`.
+
+### C.2 Laboratorio de animación
+
+```bash
+xvfb-run godot --path godot --rendering-driver opengl3 --fixed-fps 60 --resolution 560x640 \
+    --script res://demo/anim_lab.gd -- --case=swing --view=side --frames=8 --dur=1.4 --out=swing.png
+```
+Casos: `idle walk run sprint swing swing_fast hang climb rise fall flip_tuck flip_layout flip_spread flip_pike dive glide glide_bank dash zip perch hero soft_land charge wall_run crawl slingshot vault`.
 
 ### D. Validación y límites conocidos
 

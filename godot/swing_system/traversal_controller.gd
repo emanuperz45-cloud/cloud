@@ -100,6 +100,7 @@ var camera_steer_active := false
 var spider_meter := 2.0           ## cargas de Spider-Dash / Spider-Jump (0..spider_meter_charges)
 var dash_timer := 0.0             ## > 0 durante el Spider-Dash (gravedad baja, pose de vuelo)
 var vault_timer := 0.0            ## > 0 durante el salto de obstáculo (pose de vault)
+var vault_hand_point := Vector3.ZERO  ## dónde apoya la mano en el vault (cima del obstáculo)
 var _loop_mode := false           ## swing enganchado desde una picada: Loop de Loop
 var _vault_a := Vector3.ZERO      ## vault: curva de Bézier a -> c -> b
 var _vault_c := Vector3.ZERO
@@ -316,6 +317,7 @@ func _try_vault() -> bool:
 	if hit.is_empty():
 		return false
 	var top: float = (hit.position as Vector3).y
+	vault_hand_point = (hit.position as Vector3) + fwd * 0.1
 	var h := top - feet
 	if h < 0.25 or h > tuning.vault_max_height:
 		return false
