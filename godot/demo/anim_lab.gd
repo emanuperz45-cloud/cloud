@@ -239,6 +239,10 @@ func _place_camera(view: String) -> void:
 			dir = Vector3(0.0, 0.12, 1.0)
 		"back":
 			dir = Vector3(0.0, 0.25, -1.0)
+		"chase":
+			dir = Vector3(0.0, 0.4, -1.0)             # como la cámara del juego: detrás y arriba
+			cam.fov = 70.0
+			dist = float(args.get("dist", "4.6"))
 		"top":
 			dir = Vector3(-0.15, 1.0, 0.1)
 		_:

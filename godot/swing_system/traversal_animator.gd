@@ -252,6 +252,7 @@ static func basis_from(forward: Vector3, up: Vector3) -> Basis:
 		z = RegulatedPendulum.project_on_plane(Vector3.FORWARD, y)
 	z = z.normalized()
 	var x := y.cross(z).normalized()
+	z = x.cross(y).normalized()   # re-ortogonaliza (con up y forward casi paralelos z sale impreciso)
 	return Basis(x, y, z)      # frente del modelo = +Z (convención glTF/Godot)
 
 
@@ -268,6 +269,12 @@ func _update_orientation(delta: float) -> void:
 			# El eje del cuerpo sigue la web visual (mano -> anclaje real).
 			up = RegulatedPendulum.safe_normalized(c.pendulum.anchor - c.global_position, Vector3.UP)
 			fwd = RegulatedPendulum.safe_normalized(v, fwd)
+			# Se echa hacia delante como un dardo a mucha velocidad (cabeza en la dirección
+			# del avance); casi parado, cuelga recto de la web.
+			var ahead := RegulatedPendulum.project_on_plane(fwd, up)
+			if ahead.length_squared() > 1e-4:
+				var lean := lerpf(0.1, 0.95, smoothstep(6.0, 34.0, v.length()))
+				up = (up + ahead.normalized() * lean).normalized()
 			rate = orient_rate_swing
 		TraversalController.State.DIVE:
 			# Cabeza hacia la velocidad; pecho hacia el suelo.
@@ -321,6 +328,8 @@ func _update_orientation(delta: float) -> void:
 					var head := RegulatedPendulum.safe_normalized(RegulatedPendulum.flat(v), c.travel_dir)
 					up = up.lerp(head, prone).normalized()
 					fwd = fwd.lerp(Vector3.DOWN, prone)
+	# Al entrar en un estado el cuerpo tarda un momento en reorientarse (sin latigazo).
+	rate *= lerpf(0.4, 1.0, smoothstep(0.0, 0.3, c.state_time))
 	var target := Quaternion(basis_from(fwd, up))
 	var gt := visual_root.global_transform
 	var current := Quaternion(gt.basis.orthonormalized())

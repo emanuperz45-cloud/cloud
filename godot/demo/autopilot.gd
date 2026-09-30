@@ -35,6 +35,9 @@ var _anchor := Vector3.ZERO
 var _stats := {"events": {}, "substates": {}, "max_speed": 0.0, "min_y": INF, "max_y": -INF}
 var _mark := {}
 var _tapped: Array[String] = []
+var _alog := OS.has_environment("AP_ANIMLOG")     ## registra saltos bruscos de los huesos
+var _alog_prev := {}                               ## hueso -> [rotación anterior, giro del paso anterior]
+var _alog_events: Array = []
 
 
 func _ready() -> void:
@@ -145,6 +148,8 @@ func _physics_process(delta: float) -> void:
 		Input.action_release(action)       # las pulsaciones duran un frame
 	_tapped.clear()
 
+	if _alog:
+		_log_anim(delta)
 	match scenario:
 		"aim":
 			_aim()
@@ -187,6 +192,30 @@ func _physics_process(delta: float) -> void:
 		for action in ["swing", "move_forward", "move_right", "move_back", "dive", "jump", "point_zip"]:
 			Input.action_release(action)
 		print("[autopilot] RESUMEN ", JSON.stringify(_stats))
+		if _alog:
+			_alog_events.sort_custom(func(a: Array, b: Array) -> bool: return a[2] > b[2])
+			print("[animlog] %d saltos (Δ giro por paso > umbral); los 25 mayores [t, hueso, Δ°/paso, estado, °/s]:" % _alog_events.size())
+			for e in _alog_events.slice(0, 25):
+				print("[animlog] ", e)
+			if OS.has_environment("AP_ANIMLOG_ALL"):
+				_alog_events.sort_custom(func(a: Array, b: Array) -> bool: return a[0] < b[0])
+				for e in _alog_events:
+					print("[animlog-all] ", e)
+			var by := {}
+			for e in _alog_events:
+				by[e[1]] = by.get(e[1], 0) + 1
+			print("[animlog] por hueso: ", JSON.stringify(by))
+			var agg := {}
+			for e in _alog_events:
+				var key: String = "%s|%s" % [e[3], e[1]]
+				var a: Array = agg.get(key, [0, 0.0])
+				a[0] += 1
+				a[1] = maxf(a[1], e[2])
+				agg[key] = a
+			var keys := agg.keys()
+			keys.sort_custom(func(a: String, b: String) -> bool: return agg[a][0] > agg[b][0])
+			for k in keys.slice(0, 30):
+				print("[animlog] %-28s n=%4d  max=%.1f°" % [k, agg[k][0], agg[k][1]])
 		main.get_tree().quit()
 
 
@@ -574,6 +603,34 @@ func _sling() -> void:
 		_press("swing", false)
 	_press("trick", _t > 7.3 and _t < 10.0)
 	_stats["sling"] = _mark
+
+
+## Detector de saltos bruscos: por hueso (y por la raíz visual) compara el giro de este
+## paso con el anterior; una diferencia grande = cambio de velocidad angular casi instantáneo.
+func _log_anim(delta: float) -> void:
+	var body: Mannequin = player.get_node("VisualRoot").get_child(0)
+	var nodes := {}
+	for k: String in body._j:
+		nodes[k] = (body._j[k] as Node3D).quaternion
+	nodes["ROOT"] = Quaternion(player.get_node("VisualRoot").global_transform.basis.orthonormalized())
+	if OS.has_environment("AP_ANIMLOG_SERIES") and _t > 1.5 and _t < 2.3:
+		print("[series] t=%.3f kn_r=%.1f hip_r=%.1f ank_r=%.1f" % [_t, rad_to_deg((nodes["kn_r"] as Quaternion).get_angle()),
+				rad_to_deg((nodes["hip_r"] as Quaternion).get_angle()), rad_to_deg((nodes["ank_r"] as Quaternion).get_angle())])
+	for k: String in nodes:
+		var q: Quaternion = nodes[k]
+		if _alog_prev.has(k):
+			var prev: Quaternion = _alog_prev[k][0]
+			var step := prev.angle_to(q)
+			var dstep: float = absf(step - float(_alog_prev[k][1]))
+			if k == "pelvis" and dstep > 1.0 and OS.has_environment("AP_ANIMLOG"):
+				print("[animlog-pelvis] t=%.2f step=%.1f° flip_t=%.3f turns=%.1f axis=%s style=%s trick=%.2f" % [_t,
+						rad_to_deg(step), body._flip_t, body._flip_turns, body._flip_axis, body._flip_style, player.trick_timer])
+			if dstep > (0.09 if k != "ROOT" else 0.05):
+				_alog_events.append([snappedf(_t, 0.01), k, snappedf(rad_to_deg(dstep), 0.1), hud._state_name(),
+						snappedf(rad_to_deg(step) / delta, 1.0)])
+			_alog_prev[k] = [q, step]
+		else:
+			_alog_prev[k] = [q, 0.0]
 
 
 func _place(pos: Vector3, facing: Vector3) -> void:

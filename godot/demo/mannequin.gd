@@ -73,6 +73,13 @@ var _gait := 0.0               ## fase del paso (0..1) en suelo y pared
 var _crawl := 0.0              ## fase del gateo
 var _climb := 0.0              ## fase de subir por la web
 var _ik_w := {"arm_r": 0.0, "arm_l": 0.0, "leg_r": 0.0, "leg_l": 0.0}
+var _ik_prev := {}             ## miembro -> último objetivo de IK (coordenadas del cuerpo)
+var _ik_off := {}              ## miembro -> salto de objetivo pendiente de absorber
+var _ik_f := {}                ## miembro -> estado [posición, velocidad] del filtro del objetivo
+var _bend_mem := {}
+var _prev_vel := Vector3.ZERO
+var _acc_slow := Vector3.ZERO  ## aceleración lenta (gravedad, régimen estable) que se resta
+var _feel := Vector3.ZERO      ## aceleración transitoria en coordenadas del cuerpo (x izq., y arriba, z delante)            ## hueso raíz -> última dirección de flexión (IK estable)
 var _lean := 0.0
 var _prev_heading := 0.0
 var _turn_rate := 0.0
@@ -310,21 +317,27 @@ const STAND := {
 # -0,5, 0 (fondo, máxima tensión), 0,5 y 1 (ápice delante). El brazo derecho lo
 # pone la IK sobre la web; aquí se mueven piernas, tronco y brazo libre.
 const SWING_KEYS := [
-	{"sp_p": -6.0, "ch_p": -8.0, "hd_p": -14.0,
-		"lf_r": -12.0, "kf_r": 25.0, "af_r": -30.0, "lf_l": 6.0, "kf_l": 50.0, "af_l": -35.0,
-		"ae_l": 45.0, "aa_l": 45.0, "eb_l": 35.0, "wf_l": 10.0},
-	{"sp_p": 6.0, "ch_p": 5.0, "hd_p": -10.0,
-		"lf_r": 25.0, "kf_r": 70.0, "af_r": -25.0, "lf_l": 35.0, "kf_l": 90.0, "af_l": -30.0,
-		"ae_l": 30.0, "aa_l": 75.0, "eb_l": 55.0, "wf_l": 10.0},
-	{"sp_p": 14.0, "ch_p": 10.0, "hd_p": -4.0, "pel_p": 6.0,
-		"lf_r": 62.0, "kf_r": 100.0, "af_r": -20.0, "lf_l": 52.0, "kf_l": 110.0, "af_l": -25.0,
-		"ae_l": 50.0, "aa_l": -35.0, "eb_l": 115.0, "wf_l": 20.0},
-	{"sp_p": 2.0, "ch_p": -6.0, "hd_p": -18.0,
-		"lf_r": 78.0, "kf_r": 45.0, "af_r": -30.0, "lf_l": 62.0, "kf_l": 62.0, "af_l": -35.0,
-		"ae_l": 115.0, "aa_l": 15.0, "eb_l": 25.0, "wf_l": 5.0},
-	{"sp_p": -8.0, "ch_p": -12.0, "hd_p": -24.0,
-		"lf_r": 55.0, "kf_r": 20.0, "af_r": -40.0, "lf_l": 40.0, "kf_l": 38.0, "af_l": -40.0,
-		"ae_l": 150.0, "aa_l": 25.0, "eb_l": 10.0, "wf_l": 5.0},
+	# -1: recién enganchado, cuerpo detrás de la vertical -> se lanza como un dardo
+	{"sp_p": -6.0, "ch_p": -8.0, "hd_p": -16.0,
+		"lf_r": -14.0, "kf_r": 22.0, "af_r": -35.0, "lf_l": 4.0, "kf_l": 46.0, "af_l": -38.0,
+		"ae_l": 40.0, "aa_l": 40.0, "eb_l": 30.0, "wf_l": 10.0},
+	# -0,5: bajando, piernas estiradas hacia atrás, brazo libre adelante
+	{"sp_p": -4.0, "ch_p": -6.0, "hd_p": -20.0,
+		"lf_r": 6.0, "kf_r": 30.0, "af_r": -40.0, "lf_l": -6.0, "kf_l": 48.0, "af_l": -40.0,
+		"ae_l": 70.0, "aa_l": 30.0, "eb_l": 34.0, "wf_l": 10.0},
+	# 0: fondo del arco, máxima extensión (dardo), cabeza arriba mirando al frente
+	{"sp_p": -3.0, "ch_p": -4.0, "hd_p": -26.0, "pel_p": 0.0,
+		"lf_r": 10.0, "kf_r": 26.0, "af_r": -45.0, "lf_l": -4.0, "kf_l": 40.0, "af_l": -45.0,
+		"ae_l": -22.0, "aa_l": 24.0, "eb_l": 10.0, "wf_l": 5.0},
+	# 0,5: subiendo, las rodillas vienen hacia delante y el brazo libre se abre
+	{"sp_p": 2.0, "ch_p": -6.0, "hd_p": -20.0,
+		"lf_r": 66.0, "kf_r": 58.0, "af_r": -30.0, "lf_l": 46.0, "kf_l": 84.0, "af_l": -35.0,
+		"ae_l": 78.0, "aa_l": 44.0, "eb_l": 44.0, "wf_l": 5.0},
+	# 1: ápice, piernas adelante casi rectas (en L), brazo libre abierto
+	{"sp_p": -10.0, "ch_p": -14.0, "hd_p": -22.0,
+		"lf_r": 70.0, "kf_r": 14.0, "af_r": -45.0, "lf_l": 56.0, "kf_l": 24.0, "af_l": -45.0,
+		"la_r": 6.0, "la_l": 10.0,
+		"ae_l": 105.0, "aa_l": 58.0, "eb_l": 28.0, "wf_l": 5.0},
 ]
 # Swing rápido: piernas en tijera y brazo libre atrás para equilibrar (aditivo).
 const SWING_AGGRESSIVE := {
@@ -332,7 +345,7 @@ const SWING_AGGRESSIVE := {
 	"ae_l": -25.0, "aa_l": 30.0, "eb_l": -30.0,
 }
 # Compresión por fuerza G en el fondo del arco (aditivo).
-const SWING_G := {"lf_r": 16.0, "kf_r": 25.0, "lf_l": 16.0, "kf_l": 25.0, "sp_p": 6.0, "ch_p": 4.0}
+const SWING_G := {"lf_r": 6.0, "kf_r": 10.0, "lf_l": 6.0, "kf_l": 10.0, "sp_p": 3.0, "ch_p": 2.0}
 # Aire: impulso tras la suelta (subiendo), flotando en el ápice, cayendo (paracaidista).
 const AIR_RISE := {
 	"ch_p": -10.0, "sp_p": -4.0, "hd_p": -16.0,
@@ -340,10 +353,10 @@ const AIR_RISE := {
 	"ae_r": -30.0, "aa_r": 25.0, "eb_r": 25.0, "ae_l": 105.0, "aa_l": 25.0, "eb_l": 30.0,
 }
 const AIR_APEX := {
-	"ch_p": -4.0, "hd_p": -10.0,
-	"lf_r": 30.0, "la_r": 10.0, "kf_r": 55.0, "af_r": -30.0,
-	"lf_l": 8.0, "la_l": 12.0, "kf_l": 30.0, "af_l": -30.0,
-	"ae_r": 75.0, "aa_r": 85.0, "eb_r": 30.0, "ae_l": 70.0, "aa_l": 85.0, "eb_l": 35.0,
+	"ch_p": 6.0, "sp_p": 4.0, "hd_p": -10.0,
+	"lf_r": 52.0, "la_r": 6.0, "kf_r": 84.0, "af_r": -25.0,
+	"lf_l": 14.0, "la_l": 9.0, "kf_l": 46.0, "af_l": -35.0,
+	"ae_r": 62.0, "aa_r": 26.0, "eb_r": 66.0, "ae_l": 40.0, "aa_l": 34.0, "eb_l": 52.0,
 }
 const AIR_FALL := {
 	"ch_p": -14.0, "sp_p": -6.0, "hd_p": -38.0,
@@ -449,6 +462,8 @@ func _physics_process(delta: float) -> void:
 	if _flip_t < 1.0 or c.trick_timer > 0.0:
 		pose = _flip_pose(pose)
 		rate = maxf(rate, 16.0)
+	_update_feel(delta)
+	pose = _feel_pose(pose)
 	_head_look(pose)
 	_apply_pose(pose, rate, delta)
 	_apply_acro(delta)
@@ -535,41 +550,49 @@ static func _foot_basis(fwd: Vector3, up: Vector3, lift_deg: float) -> Basis:
 	return b
 
 
+## Trayectoria continua de un pie a lo largo de un ciclo de paso: apoyo (t < duty, el pie
+## recorre el suelo de zf a zb) y vuelo. Posición Y VELOCIDAD son continuas en los dos
+## cambios de fase (el vuelo sale y llega con la velocidad del apoyo, como un pie real:
+## coz atrás al despegar, garra atrás antes de pisar); la altura es una campana con
+## pendiente cero en los extremos. Devuelve (z, altura, inclinación en grados; + = talón arriba).
+static func _foot_cycle(t: float, duty: float, zf: float, zb: float, lift: float, toe: float,
+		skew: float, flex: float) -> Vector3:
+	if t < duty:
+		var u := t / duty
+		return Vector3(lerpf(zf, zb, u), 0.0, lerpf(-7.0, toe, smoothstep(0.3, 1.0, u)))
+	var ts := 1.0 - duty
+	var u := (t - duty) / ts
+	var m := (zb - zf) / duty * ts               # dz/du con la velocidad del apoyo
+	var u2 := u * u
+	var u3 := u2 * u
+	var z := (2.0 * u3 - 3.0 * u2 + 1.0) * zb + (u3 - 2.0 * u2 + u) * m \
+			+ (-2.0 * u3 + 3.0 * u2) * zf + (u3 - u2) * m
+	var y := lift * pow(sin(PI * pow(u, skew)), 2.0)
+	var pitch := lerpf(toe, -7.0, smoothstep(0.0, 1.0, u)) + flex * pow(sin(PI * u), 2.0)
+	return Vector3(z, y, pitch)
+
+
 ## Generador de pasos (suelo o pared). Pie de apoyo quieto respecto al suelo, talón
-## al glúteo al esprintar, rodilla que sube; brazos opuestos a las piernas.
+## al glúteo al esprintar, rodilla que sube; brazos opuestos a las piernas. Los pies
+## siguen curvas C1 (_foot_cycle): sin tirones de velocidad en ningún cambio de fase.
 func _run(ik: Dictionary, delta: float, speed: float, sprint: bool, on_wall: bool) -> Dictionary:
 	var run01 := clampf(speed / 18.0, 0.0, 1.0)
 	var freq := lerpf(1.1, 2.7, run01)
-	var duty := lerpf(0.6, 0.3, smoothstep(0.1, 0.7, run01))
-	var stance := clampf(speed * duty / freq, 0.25, 1.1)
+	var duty := lerpf(0.62, 0.3, smoothstep(0.1, 0.75, run01))
+	var stance := clampf(speed * duty / freq, 0.3, 0.82)
 	_gait = fmod(_gait + freq * delta, 1.0)
+	var lift_h := lerpf(0.10, 0.44, smoothstep(0.05, 0.9, run01))
+	var toe := lerpf(12.0, 38.0, run01)
+	var flex := lerpf(14.0, 30.0, run01)
 	var pose := {}
 	for s: String in SIDES:
 		var sx: float = SIDES[s]
 		var ph := fmod(_gait + (0.0 if s == "r" else 0.5), 1.0)
-		var foot := Vector3(sx * lerpf(0.12, 0.09, run01), 0.0, 0.0)
-		var lift := 0.0
-		if ph < duty:
-			var u := ph / duty
-			foot.z = stance * 0.5 - stance * u
-			lift = smoothstep(0.55, 1.0, u) * lerpf(10.0, 35.0, run01)      # despegue de punta
-		else:
-			var u := (ph - duty) / (1.0 - duty)
-			var pts := [
-				Vector2(-stance * 0.5, 0.0),
-				Vector2(-stance * 0.5 - 0.12 * run01, 0.10 + 0.34 * run01),    # talón arriba
-				Vector2(0.03, 0.14 + 0.22 * run01),                            # rodilla arriba
-				Vector2(stance * 0.5 + 0.08 * run01, 0.06 + 0.08 * run01),     # alcanza delante
-				Vector2(stance * 0.5, 0.0),
-			]
-			var p := _spline2(pts, u)
-			foot.z = p.x
-			foot.y = p.y
-			lift = lerpf(lerpf(40.0, 55.0, run01), -8.0, smoothstep(0.1, 0.8, u))
-		var local := Vector3(foot.x, GROUND + ANKLE_H + foot.y, foot.z + 0.04 * run01)
+		var f := _foot_cycle(ph, duty, stance * 0.5, -stance * 0.5, lift_h, toe, 0.85, flex)
+		var local := Vector3(sx * lerpf(0.12, 0.09, run01), GROUND + ANKLE_H + f.y, f.x + 0.04 * run01)
 		var up := _wdir(Vector3.UP)
-		var end := _foot_basis(_wdir(Vector3.BACK), up, lift)
-		ik["leg_" + s] = {"t": _w(local), "pole": _wdir(Vector3(sx * 0.1, 0.0, 1.0)), "end": end, "w": 1.0}
+		var end := _foot_basis(_wdir(Vector3.BACK), up, f.z)
+		ik["leg_" + s] = {"t": _w(local), "pole": _wdir(Vector3(sx * 0.1, 0.35, 1.0)), "end": end, "w": 1.0}
 		# Brazo opuesto a la pierna del mismo lado (atrás cuando la pierna va delante).
 		var wave := cos(TAU * ph)
 		pose["ae_" + s] = lerpf(8.0, 12.0, run01) - wave * lerpf(18.0, 55.0, run01)
@@ -578,7 +601,7 @@ func _run(ik: Dictionary, delta: float, speed: float, sprint: bool, on_wall: boo
 		pose["wf_" + s] = 10.0
 	var wave_r := cos(TAU * _gait)
 	var bob := -cos(TAU * 2.0 * (_gait - duty * 0.5)) * lerpf(0.012, 0.045, run01)
-	pose["hip_y"] = lerpf(0.02, -0.05, run01) + bob
+	pose["hip_y"] = lerpf(0.02, -0.11, run01) + bob
 	pose["pel_y"] = 7.0 * run01 * wave_r
 	pose["ch_y"] = -11.0 * run01 * wave_r
 	pose["nk_y"] = 5.0 * run01 * wave_r
@@ -590,19 +613,6 @@ func _run(ik: Dictionary, delta: float, speed: float, sprint: bool, on_wall: boo
 	if on_wall:
 		pose["hd_p"] = pose["hd_p"] - 10.0
 	return pose
-
-
-static func _spline2(pts: Array, u: float) -> Vector2:
-	var n := pts.size()
-	var f := clampf(u, 0.0, 1.0) * (n - 1)
-	var i := mini(int(f), n - 2)
-	var t := f - i
-	var p0: Vector2 = pts[maxi(i - 1, 0)]
-	var p1: Vector2 = pts[i]
-	var p2: Vector2 = pts[i + 1]
-	var p3: Vector2 = pts[mini(i + 2, n - 1)]
-	return 0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t
-			+ (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t)
 
 
 func _swing(ik: Dictionary) -> Dictionary:
@@ -777,25 +787,22 @@ func _wall_climb_run(ik: Dictionary, delta: float, speed: float) -> Dictionary:
 	var duty := 0.45
 	var stroke := clampf(speed * duty / freq, 0.3, 0.6)
 	_gait = fmod(_gait + freq * delta, 1.0)
+	var center := -0.32 - stroke * 0.5
 	# Plano de la pared en coordenadas del cuerpo: n·p = -0,4 (la cápsula está a 0,4 m).
 	var n_l := (global_transform.basis.orthonormalized().inverse() * c.wall_normal).normalized()
 	var pose := {}
 	for s: String in SIDES:
 		var sx: float = SIDES[s]
 		var ph := fmod(_gait + (0.0 if s == "r" else 0.5), 1.0)
-		var y := 0.0
-		var off := 0.0
-		if ph < duty:
-			y = -0.32 - stroke * (ph / duty)
-		else:
-			var u := (ph - duty) / (1.0 - duty)
-			y = -0.32 - stroke * (1.0 - smoothstep(0.0, 1.0, u))
-			off = sin(u * PI) * 0.16                # la pierna se separa de la pared
+		# Mismo ciclo C1 que la carrera: "delante" = arriba por la pared, la altura del
+		# vuelo = separación de la fachada.
+		var f := _foot_cycle(ph, duty, stroke * 0.5, -stroke * 0.5, 0.16, 8.0, 0.9, 10.0)
+		var y := center + f.x
 		var x := sx * 0.13
-		var z := (-0.4 - ANKLE_H - off - n_l.x * x - n_l.y * y) / minf(n_l.z, -0.2)
-		var end := _foot_basis(_wdir(Vector3.UP), c.wall_normal, 0.0)
+		var z := (-0.4 - ANKLE_H - f.y - n_l.x * x - n_l.y * y) / minf(n_l.z, -0.2)
+		var end := _foot_basis(_wdir(Vector3.UP), c.wall_normal, f.z * 0.6)
 		ik["leg_" + s] = {"t": _w(Vector3(x, y, z)), "pole": _wdir(Vector3(sx * 0.3, 0.6, 1.0)),
-				"end": end if ph < duty else null, "w": 1.0}
+				"end": end, "w": 1.0}
 		var wave := cos(TAU * ph)
 		pose["ae_" + s] = 20.0 + wave * 35.0
 		pose["aa_" + s] = 20.0
@@ -818,8 +825,10 @@ func _crawl_pose(ik: Dictionary, delta: float) -> Dictionary:
 	var freq := clampf(speed / (step * 1.6), 0.0, 2.6)
 	_crawl = fmod(_crawl + freq * delta, 1.0)
 	var wall := 0.2                             # la pared está a +Z (el pecho mira a la fachada)
-	var limbs := {"arm_r": [Vector2(-0.36, 0.58), 0.0], "arm_l": [Vector2(0.36, 0.58), 0.5],
-			"leg_r": [Vector2(-0.3, -0.62), 0.5], "leg_l": [Vector2(0.3, -0.62), 0.0]}
+	# Como una araña: manos altas (por encima de la cabeza, brazos casi estirados) y pies
+	# bajos y abiertos con las rodillas hacia fuera.
+	var limbs := {"arm_r": [Vector2(-0.36, 0.95), 0.0], "arm_l": [Vector2(0.36, 0.95), 0.5],
+			"leg_r": [Vector2(-0.38, -0.72), 0.5], "leg_l": [Vector2(0.38, -0.72), 0.0]}
 	for limb: String in limbs:
 		var base: Vector2 = limbs[limb][0]
 		var ph := fmod(_crawl + float(limbs[limb][1]), 1.0)
@@ -894,6 +903,49 @@ func _flip_pose(base: Dictionary) -> Dictionary:
 	return blend(pose, shape, hold)
 
 
+## Aceleración transitoria del cuerpo (filtro paso alto de la aceleración): lo que "se
+## siente" al despegar, al frenar, al aterrizar o al enganchar la web. La gravedad y los
+## regímenes estables se quedan en el filtro lento y no cuentan.
+func _update_feel(delta: float) -> void:
+	var c := controller
+	var a := (c.velocity - _prev_vel) / maxf(delta, 1e-4)
+	_prev_vel = c.velocity
+	a = a.limit_length(400.0)
+	_acc_slow = _acc_slow.lerp(a, 1.0 - exp(-delta / 0.45))
+	var local := global_transform.basis.orthonormalized().inverse() * (a - _acc_slow)
+	_feel = _feel.lerp(local.limit_length(90.0), 1.0 - exp(-14.0 * delta))
+
+
+## Acción secundaria: el cuerpo reacciona a lo que le pasa. Acelerar echa el pecho
+## adelante y arrastra piernas, brazos y cabeza; un frenazo los adelanta; un golpe hacia
+## arriba (aterrizaje, fondo del arco) comprime cadera y rodillas y lanza los brazos; una
+## aceleración lateral inclina el tronco hacia dentro.
+func _feel_pose(pose: Dictionary) -> Dictionary:
+	var c := controller
+	if c.state in [TraversalController.State.SLINGSHOT, TraversalController.State.PERCH,
+			TraversalController.State.VAULT, TraversalController.State.WALL_RUN]:
+		return pose
+	var az := signf(_feel.z) * maxf(absf(_feel.z) - 1.5, 0.0)
+	var ax := signf(_feel.x) * maxf(absf(_feel.x) - 1.5, 0.0)
+	var ay := signf(_feel.y) * maxf(absf(_feel.y) - 1.5, 0.0)
+	var k := 1.0 if c.state != TraversalController.State.GLIDE else 0.4
+	var out := pose.duplicate()
+	var add_ch := func(key: String, v: float) -> void: out[key] = out.get(key, 0.0) + v * k
+	add_ch.call("ch_p", clampf(az * 0.22, -8.0, 8.0))
+	add_ch.call("sp_p", clampf(az * 0.14, -5.0, 5.0))
+	add_ch.call("hd_p", clampf(-az * 0.2, -7.0, 7.0))
+	add_ch.call("ch_r", clampf(-ax * 0.22, -8.0, 8.0))
+	add_ch.call("pel_r", clampf(-ax * 0.16, -6.0, 6.0))
+	add_ch.call("hd_r", clampf(ax * 0.1, -4.0, 4.0))
+	for s: String in SIDES:
+		add_ch.call("lf_" + s, clampf(-az * 0.32 + ay * 0.22, -16.0, 22.0))
+		add_ch.call("kf_" + s, clampf(ay * 0.5, -8.0, 45.0))
+		add_ch.call("ae_" + s, clampf(-az * 0.36 + ay * 0.32, -16.0, 24.0))
+	if c.state == TraversalController.State.GROUNDED:
+		add_ch.call("hip_y", clampf(-ay * 0.005, -0.22, 0.04))
+	return out
+
+
 ## La cabeza mira hacia donde se va (el cuello se lleva un 40 %).
 func _head_look(pose: Dictionary) -> void:
 	var c := controller
@@ -903,7 +955,11 @@ func _head_look(pose: Dictionary) -> void:
 		return
 	if _flip_t < 1.0:
 		return
-	var local := (_j["chest"] as Node3D).global_transform.basis.orthonormalized().inverse() * v.normalized()
+	var look := v.normalized()
+	if c.aim_anchor != null and c.state in [TraversalController.State.FALL, TraversalController.State.SWING]:
+		var to_aim := (c.aim_anchor.point - (_j["head"] as Node3D).global_position).normalized()
+		look = (look * 0.55 + to_aim * 0.45).normalized()
+	var local := (_j["chest"] as Node3D).global_transform.basis.orthonormalized().inverse() * look
 	var yaw := clampf(rad_to_deg(atan2(local.x, local.z)), -60.0, 60.0)
 	var pitch := clampf(-rad_to_deg(atan2(local.y, Vector2(local.x, local.z).length())), -35.0, 35.0)
 	var w := 0.6 if c.state == TraversalController.State.GROUNDED else 0.45
@@ -938,7 +994,7 @@ func _spring_joint(key: String, target: Quaternion, rate: float, delta: float) -
 	var axis_angle := Vector3(dq.x, dq.y, dq.z) * 2.0
 	if s > 1e-4:
 		axis_angle = Vector3(dq.x, dq.y, dq.z) / s * (2.0 * acos(clampf(dq.w, -1.0, 1.0)))
-	var zeta := 1.0 if key in TORSO else 0.85
+	var zeta := 1.0 if key in TORSO else 0.7
 	var w: Vector3 = _joint_vel.get(key, Vector3.ZERO)
 	w += (axis_angle * rate * rate - w * 2.0 * zeta * rate) * delta
 	w = w.limit_length(40.0)
@@ -983,10 +1039,15 @@ func _apply_ik(ik: Dictionary, delta: float) -> void:
 		cur = move_toward(cur, want, delta * (9.0 if want > cur else 6.0))
 		_ik_w[limb] = cur
 		if cur <= 0.001 or not ik.has(limb):
+			_ik_prev.erase(limb)
+			_ik_off.erase(limb)
+			_ik_f.erase(limb)
 			continue
 		var req: Dictionary = ik[limb]
 		var s := limb.substr(limb.length() - 1)
 		var w := cur * float(req.get("w", 1.0))
+		req = req.duplicate()
+		req["t"] = _absorb_jump(limb, req["t"], delta)
 		if limb.begins_with("arm"):
 			if req.has("shrug"):
 				var cl: Node3D = _j["cl_" + s]
@@ -1000,19 +1061,68 @@ func _apply_ik(ik: Dictionary, delta: float) -> void:
 				_set_global_basis(_j["ank_" + s], req["end"], w)
 
 
+## Suaviza el objetivo de la IK de cada miembro en dos pasos, siempre en coordenadas del
+## cuerpo (así el avance del cuerpo, 20-50 m/s, no cuenta como movimiento del objetivo):
+##  1. Filtro crítico de 2.º orden con compensación de retardo (sale x + v·2/ω): un objetivo
+##     que se mueve a velocidad constante lo sigue SIN retraso (el pie de apoyo no patina),
+##     pero un cambio brusco de velocidad (cambio de fase del paso) se reparte en unos
+##     30 ms en vez de ser un golpe de aceleración.
+##  2. Inercialización: si el objetivo salta (cambio de estado, agarre nuevo...) el salto se
+##     absorbe con un decaimiento rápido en vez de aparecer de golpe.
+func _absorb_jump(limb: String, target: Vector3, delta: float) -> Vector3:
+	const OMEGA := 70.0
+	var raw := to_local(target)
+	var off: Vector3 = _ik_off.get(limb, Vector3.ZERO)
+	var f: Array = _ik_f.get(limb, [raw, Vector3.ZERO])
+	if _ik_prev.has(limb):
+		var d := raw - (_ik_prev[limb] as Vector3)
+		if d.length() > 0.28:
+			off -= d
+			f[0] = (f[0] as Vector3) + d
+	_ik_prev[limb] = raw
+	var x: Vector3 = f[0]
+	var v: Vector3 = f[1]
+	# Solución exacta del muelle crítico (estable a cualquier paso, a diferencia de Euler).
+	var rel := x - raw
+	var e := exp(-OMEGA * delta)
+	var tmp := (v + rel * OMEGA) * delta
+	x = raw + (rel + tmp) * e
+	v = (v - tmp * OMEGA) * e
+	_ik_f[limb] = [x, v]
+	off *= exp(-delta / 0.07)
+	_ik_off[limb] = off
+	return to_global(x + v * (2.0 / OMEGA) + off)
+
+
 ## IK analítica de dos huesos. La raíz y el medio tienen el hueso a lo largo de -Y;
 ## hinge +1: la bisagra dobla hacia -Z (rodilla), -1: hacia +Z (codo).
 func _two_bone(root: Node3D, mid: Node3D, l1: float, l2: float, target: Vector3, pole: Vector3,
 		hinge: float, weight: float) -> void:
 	var r := root.global_position
 	var d := target - r
-	var dist := clampf(d.length(), absf(l1 - l2) + 0.01, l1 + l2 - 0.002)
+	var reach := l1 + l2 - 0.002
+	var dist := maxf(d.length(), absf(l1 - l2) + 0.01)
+	if dist > reach * 0.88:
+		# Saturación suave cerca de la extensión total: sin ella el ángulo de la rodilla
+		# (un arccos) pasa de doblada a recta en un solo paso.
+		dist = reach * 0.88 + reach * 0.12 * tanh((dist - reach * 0.88) / (reach * 0.12))
 	var dn := d.normalized() if d.length_squared() > 1e-8 else Vector3.DOWN
-	var h := pole.cross(dn)
-	if h.length_squared() < 1e-6:
-		h = dn.cross(Vector3.RIGHT if absf(dn.x) < 0.9 else Vector3.BACK)
-	h = h.normalized()
-	var b := dn.cross(h)
+	# Dirección de la flexión = polo proyectado sobre el plano normal al hueso. Cuando el
+	# polo casi coincide con la dirección del miembro esa proyección es inestable (la
+	# rodilla "da la vuelta" de un paso a otro): se mezcla con la flexión del paso anterior.
+	var key := String(root.name)
+	var b := pole - dn * dn.dot(pole)
+	var bl := b.length()
+	var mem: Vector3 = _bend_mem.get(key, Vector3.ZERO)
+	mem = mem - dn * dn.dot(mem)
+	if bl < 0.4 and mem.length_squared() > 1e-4:
+		var k := bl / 0.4
+		b = (b.normalized() if bl > 1e-4 else Vector3.ZERO) * k + mem.normalized() * (1.0 - k)
+	if b.length_squared() < 1e-6:
+		b = dn.cross(Vector3.RIGHT if absf(dn.x) < 0.9 else Vector3.BACK)
+	b = b.normalized()
+	_bend_mem[key] = b
+	var h := b.cross(dn)
 	var a := acos(clampf((l1 * l1 + dist * dist - l2 * l2) / (2.0 * l1 * dist), -1.0, 1.0))
 	var mid_p := r + dn * (l1 * cos(a)) + b * (l1 * sin(a))
 	var end_p := r + dn * dist
@@ -1050,6 +1160,8 @@ const RELEASE_FLIPS := [
 
 
 func start_flip(axis: Vector3, turns: float, duration: float, style := "tuck") -> void:
+	if _flip_t < 0.75:
+		return                       # ya girando: otro giro encima haría saltar el cuerpo
 	_flip_axis = axis.normalized()
 	_flip_turns = turns
 	_flip_time = duration
@@ -1068,7 +1180,7 @@ func _on_web_released(_hand: int, perfect: bool) -> void:
 	_last_flip = i
 	var f: Array = RELEASE_FLIPS[i]
 	if perfect:
-		start_flip(f[0], 2.0 if f[3] == "tuck" else 1.5, float(f[2]) * 1.35, f[3])
+		start_flip(f[0], 2.0, float(f[2]) * 1.35, f[3])
 	else:
 		start_flip(f[0], f[1], f[2], f[3])
 
