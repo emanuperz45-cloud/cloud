@@ -40,7 +40,8 @@ cp /ruta/a/godot-4.7.2-stable/bin/godot.windows.template_release.x86_64.slim.exe
 godot --headless --path godot --export-release "Windows Slim" build/WebSwingDemo.exe
 # Pruebas automáticas sin interfaz (imprimen un resumen JSON):
 godot --headless --path godot --fixed-fps 60 -- --autopilot=120 --scenario=tour
-godot --headless --path godot --fixed-fps 60 -- --autopilot=26 --scenario=hang   # mantener el clic
+godot --headless --path godot --fixed-fps 60 -- --autopilot=26 --scenario=hang   # apuntar, clic y mantenerlo
+godot --headless --path godot --fixed-fps 60 -- --autopilot=11 --scenario=aim    # la web va donde apunta la mira
 godot --headless --path godot --fixed-fps 60 -- --autopilot=23 --scenario=moves  # moveset completo
 godot --headless --path godot --fixed-fps 60 -- --autopilot=20 --scenario=glide  # Web Wings y viento
 godot --headless --path godot --fixed-fps 60 -- --autopilot=14 --scenario=sling  # Slingshot y loop
@@ -58,7 +59,7 @@ vista en una franja compacta abajo a la izquierda (H la oculta o la vuelve a mos
 
 | Acción | Teclado y ratón | Mando |
 |---|---|---|
-| Balanceo: **mantener = misma telaraña** (se amortigua hasta quedar colgado); soltar = soltarse | Clic izquierdo | RT / R2 |
+| Balanceo: la telaraña se lanza **donde apunta la mira** (centro de la pantalla; el marcador cian enseña el punto). **Mantener = misma telaraña** (se amortigua hasta quedar colgado, nunca salta a otro edificio); soltar = soltarse; otra telaraña = otro clic | Clic izquierdo | RT / R2 |
 | Colgado: subir / bajar por la telaraña | W / S | Stick izq. |
 | Salto: en el swing (abajo = adelante, final = arriba), Web Zip en el aire (Quick Zip si repites), Charge Jump manteniendo en el suelo, Quick Recovery al rodar, Point Launch al llegar a un perch, tirón hacia arriba o salto en una pared | Espacio | A |
 | Sprint (suelo) / correr por la pared (sin clic se trepa) | Clic izq. mantenido | RT / R2 |

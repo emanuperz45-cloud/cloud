@@ -68,7 +68,6 @@ extends Resource
 ## Loop: mantener truco en un arco rápido recoge cuerda hasta L = factor·v²/(5·g).
 @export var loop_radius_factor: float = 0.8
 @export var loop_min_speed: float = 20.0
-@export var reattach_delay: float = 0.15
 ## "Swing jump" (salto durante el swing): en el fondo del arco lanza hacia
 ## delante, al final del arco hacia arriba (como en el original).
 @export var swing_jump_up: float = 9.0
@@ -157,6 +156,14 @@ extends Resource
 @export var anchor_ideal_radius: float = 30.0
 @export var anchor_speed_scale_min: float = 0.8
 @export var anchor_speed_scale_max: float = 1.5
+
+@export_group("Apuntado")
+## La telaraña va al punto que apunta la mira (rayo de la cámara por el centro de la
+## pantalla). Si ese punto exacto no sirve, se busca uno válido dentro de un cono.
+@export var aim_max_distance: float = 46.0       ## alcance de la telaraña desde el jugador
+@export var aim_min_height: float = 5.0          ## el anclaje debe estar así de alto sobre el jugador
+@export var aim_assist_deg: float = 12.0         ## radio del cono de asistencia
+@export var swing_buffer: float = 0.2            ## un clic dado justo antes de poder disparar sigue valiendo (s)
 
 @export_group("Suelo")
 @export var run_speed: float = 10.0

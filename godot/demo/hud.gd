@@ -9,7 +9,7 @@ const STATE_NAMES := [
 ]
 ## Controles: siempre a la vista en una franja compacta abajo (H la oculta/muestra).
 const CONTROLS := [
-	["Clic izq · RT", "Balanceo (mantén = colgarte)"],
+	["Clic izq · RT", "Web a la mira · mantén = columpio"],
 	["Espacio · A", "Salto · en el aire: web zip"],
 	["WASD · Stick", "Moverte · colgado: subir/bajar"],
 	["Mayús · B", "Picada · + clic: Loop de Loop"],
@@ -175,7 +175,20 @@ func _state_name() -> String:
 func _draw_reticle() -> void:
 	var cam := camera_rig.camera
 	var center := _reticle.size * 0.5
-	_reticle.draw_circle(center, 2.5, Color(1, 1, 1, 0.6))
+	# Mira: anillo que se ilumina cuando hay un anclaje al alcance; el marcador señala el
+	# punto exacto donde se clavará la telaraña (anillo sólido = justo donde apuntas;
+	# con una línea hasta la mira = punto cercano elegido por la asistencia).
+	var anchor := controller.aim_anchor
+	var locked := anchor != null and not cam.is_position_behind(anchor.point)
+	var aim_col := Color(0.55, 0.92, 1.0, 0.95) if locked else Color(1, 1, 1, 0.4)
+	_reticle.draw_arc(center, 7.0, 0.0, TAU, 24, aim_col, 1.5)
+	_reticle.draw_circle(center, 1.8, aim_col)
+	if locked:
+		var ap := cam.unproject_position(anchor.point)
+		if not controller.aim_exact:
+			_reticle.draw_line(center, ap, Color(aim_col, 0.35), 1.0)
+		_reticle.draw_arc(ap, 10.0, 0.0, TAU, 24, aim_col, 2.0)
+		_reticle.draw_circle(ap, 3.0, aim_col)
 	# Medidor de Spider-Dash / Spider-Jump: una barra por carga, bajo los datos
 	# de arriba a la izquierda (la franja de controles ocupa la parte de abajo).
 	var charges := int(controller.tuning.spider_meter_charges)

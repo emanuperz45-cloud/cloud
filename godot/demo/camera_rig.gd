@@ -77,6 +77,24 @@ func look_towards(dir: Vector3) -> void:
 	_idle = 0.0
 
 
+## Fija la orientación al instante (autopiloto y pruebas): la mira apunta hacia (yaw, pitch).
+func set_look(new_yaw: float, new_pitch: float) -> void:
+	yaw = new_yaw
+	pitch = clampf(new_pitch, -1.35, 0.9)
+	_idle = 0.0
+	rotation = Vector3(pitch, yaw, _roll)
+
+
+## Orienta la cámara para que el centro de la pantalla señale `point`. La cámara cuelga
+## del foco a `spring_length` en sentido contrario a su mirada, así que el rayo
+## cámara -> punto depende de la orientación: tres iteraciones sobran.
+func aim_at(point: Vector3) -> void:
+	for i in 3:
+		var cam_pos := global_position + Basis.from_euler(Vector3(pitch, yaw, 0.0)).z * spring.spring_length
+		var d := (point - cam_pos).normalized()
+		set_look(atan2(-d.x, -d.z), asin(clampf(d.y, -1.0, 1.0)))
+
+
 func _unhandled_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
 		var motion := (event as InputEventMouseMotion).relative

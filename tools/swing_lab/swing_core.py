@@ -218,6 +218,12 @@ class SwingTuning:
     anchor_speed_scale_min: float = 0.8   # el punto ideal se aleja con la velocidad
     anchor_speed_scale_max: float = 1.5   # para mantener la fuerza G en rango
 
+    # Apuntado: la telaraña va al punto que señala la mira
+    aim_max_distance: float = 46.0        # alcance desde el jugador (~ rope_max)
+    aim_min_height: float = 5.0           # altura mínima del anclaje sobre el jugador
+    aim_assist_deg: float = 12.0          # cono de asistencia si el punto exacto no sirve
+    swing_buffer: float = 0.2             # s: un clic justo antes de poder disparar sigue valiendo
+
 
 # ---------------------------------------------------------------------------
 # Péndulo regulado
@@ -614,6 +620,29 @@ def score_anchor(c: AnchorCandidate, pos: V3, travel: V3, side: float,
     lat = rel.dot(right)
     s_side = 1.0 if lat * side > 0.0 else 0.4
     return 0.40 * s_dist + 0.25 * s_dir + 0.20 * s_height + 0.15 * s_side
+
+
+def aim_anchor_valid(c: AnchorCandidate, pos: V3, t: SwingTuning) -> bool:
+    """
+    ¿Sirve como anclaje el punto que señala la mira? Es la versión "apuntada" de
+    score_anchor: no exige que esté delante ni cerca del punto ideal (el jugador
+    decide), solo que el péndulo quepa: alcance, altura mínima, cara superior, arco
+    sobre el suelo y un pivote a menos de rope_max (si no, al enganchar el cuerpo
+    daría un tirón hacia el pivote).
+    """
+    rel = c.point - pos
+    if rel.y < t.aim_min_height:
+        return False
+    dist = rel.length()
+    if dist < t.rope_min or dist > t.aim_max_distance:
+        return False
+    if c.normal.y < -0.5:                # cara inferior de un voladizo
+        return False
+    if c.point.y - (c.ground_y + t.ground_clearance) < t.rope_min:
+        return False                     # el arco no cabe sobre el suelo
+    travel = rel.horizontal().normalized(V3(0, 0, 1))
+    pivot = RegulatedPendulum(t).solve_pivot(pos, c.point, travel)
+    return (pos - pivot).length() <= t.rope_max
 
 
 # ---------------------------------------------------------------------------

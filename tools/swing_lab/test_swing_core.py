@@ -5,7 +5,7 @@ from dataclasses import replace
 
 import city_sim
 from swing_core import (UP, AnchorCandidate, Glider, RegulatedPendulum, SwingInput, SwingTuning, V3,
-                        score_anchor, step_air, terminal_velocity)
+                        aim_anchor_valid, score_anchor, step_air, terminal_velocity)
 
 H = 1.0 / 240.0
 
@@ -343,6 +343,59 @@ class AirAndAnchorTests(unittest.TestCase):
         self.assertGreater(score_anchor(good, pos, fwd, 1.0, t), 0.5)
         for c in (low, behind, overhang):
             self.assertEqual(score_anchor(c, pos, fwd, 1.0, t), -1.0)
+
+
+class AimAnchorTests(unittest.TestCase):
+    """El anclaje apuntado: el jugador decide, pero el péndulo tiene que caber."""
+
+    def setUp(self):
+        self.t = SwingTuning()
+        self.pos = V3(0, 40, 0)
+
+    def cand(self, x, y, z, ny=0.0, ground=0.0):
+        return AnchorCandidate(V3(x, y, z), V3(1, ny, 0), ground_y=ground)
+
+    def test_accepts_points_in_any_direction(self):
+        # A diferencia de score_anchor, apuntar hacia atrás o a un lado es válido.
+        for c in (self.cand(-8, 62, 18), self.cand(-8, 62, -20), self.cand(25, 60, 0)):
+            self.assertTrue(aim_anchor_valid(c, self.pos, self.t), c)
+
+    def test_rejects_unusable_points(self):
+        cases = {
+            "demasiado bajo": self.cand(-8, 43, 18),
+            "fuera de alcance": self.cand(-8, 70, 60),
+            "voladizo": self.cand(-8, 62, 18, ny=-1.0),
+            "arco no cabe": self.cand(-8, 62, 18, ground=55.0),
+            "demasiado cerca": self.cand(0, 47, 2),
+        }
+        for name, c in cases.items():
+            self.assertFalse(aim_anchor_valid(c, self.pos, self.t), name)
+
+    def test_pivot_must_be_within_rope_reach(self):
+        # Anclaje dentro del alcance (45,3 m < 46 m), pero el pivote regulado se desplaza
+        # hacia delante hasta ~48 m > rope_max: al enganchar habría un tirón visible.
+        far = self.cand(0, 40 + 34, 30)
+        self.assertLessEqual((far.point - self.pos).length(), self.t.aim_max_distance)
+        pivot = RegulatedPendulum(self.t).solve_pivot(self.pos, far.point, V3(0, 0, 1))
+        self.assertGreater((self.pos - pivot).length(), self.t.rope_max)
+        self.assertFalse(aim_anchor_valid(far, self.pos, self.t))
+        near = self.cand(0, 40 + 20, 26)          # mismo lado, más cerca: sí cabe
+        self.assertTrue(aim_anchor_valid(near, self.pos, self.t))
+
+    def test_every_valid_anchor_swings_without_a_jerk(self):
+        """Engancha a puntos válidos en muchas direcciones: la cuerda inicial cabe (sin tirón)."""
+        for ang in range(0, 360, 30):
+            for dist in (14.0, 26.0, 40.0):
+                for rise in (8.0, 18.0, 30.0):
+                    a = math.radians(ang)
+                    c = self.cand(math.sin(a) * dist, 40 + rise, math.cos(a) * dist)
+                    if not aim_anchor_valid(c, self.pos, self.t):
+                        continue
+                    p = RegulatedPendulum(self.t)
+                    travel = (c.point - self.pos).horizontal().normalized(V3(0, 0, 1))
+                    p.attach(self.pos, V3(0, -6, 18), c.point, travel, ground_y=0.0)
+                    self.assertLessEqual((self.pos - p.pivot).length(), self.t.rope_max + 1e-6)
+                    self.assertGreater(p.length, 0.0)
 
 
 class CitySimTests(unittest.TestCase):

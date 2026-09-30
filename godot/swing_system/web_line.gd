@@ -7,6 +7,7 @@ extends MeshInstance3D
 ## ATTACHED: Verlet con extremos fijos; `tension01` (lo escribe el animador o
 ##   el controller) controla la holgura: tensa = recta, floja = catenaria.
 ## RELEASED: la mano se suelta, la web cae colgando del anclaje y se desvanece.
+## Fallo (fire_miss): la punta viaja hacia el vacío, no engancha y la cinta cae libre.
 ## La cinta se afina hacia el anclaje y allí queda una estrella de impacto (splat).
 ## El material debe usar vertex color como albedo y transparencia alpha.
 
@@ -33,6 +34,7 @@ var _prev := PackedVector3Array()
 var _rest_total := 0.0
 var _t := 0.0
 var _whip_axis := Vector3.RIGHT
+var _miss := false                 ## web que no engancha: al llegar la punta se suelta por los dos extremos
 var _imesh := ImmediateMesh.new()
 
 
@@ -47,6 +49,7 @@ func _ready() -> void:
 func fire(hand: Node3D, anchor: Vector3) -> void:
 	_hand = hand
 	_anchor = anchor
+	_miss = false
 	_t = 0.0
 	phase = Phase.SHOOTING
 	var start := _hand_pos()
@@ -57,6 +60,12 @@ func fire(hand: Node3D, anchor: Vector3) -> void:
 		_prev[i] = start
 	var dir := (anchor - start).normalized()
 	_whip_axis = RegulatedPendulum.safe_normalized(dir.cross(Vector3.UP), Vector3.RIGHT)
+
+
+## Web lanzada al vacío: sale hacia `tip`, no engancha y cae libre.
+func fire_miss(hand: Node3D, tip: Vector3) -> void:
+	fire(hand, tip)
+	_miss = true
 
 
 func release() -> void:
@@ -92,13 +101,15 @@ func _process(delta: float) -> void:
 				_prev[i] = _points[i]
 			if k >= 1.0:
 				phase = Phase.ATTACHED
+				if _miss:
+					release()
 		Phase.ATTACHED:
 			var hand := _hand_pos()
 			var slack := lerpf(1.06, 1.0, tension01)
 			_simulate(delta, hand, _anchor.distance_to(hand) * slack)
 		Phase.RELEASED:
 			_simulate(delta, Vector3.INF, _rest_total)
-			if _t >= fade_time:
+			if _t >= (fade_time * 0.5 if _miss else fade_time):
 				phase = Phase.HIDDEN
 				_imesh.clear_surfaces()
 				return
@@ -111,14 +122,15 @@ func _simulate(delta: float, hand: Vector3, total_length: float) -> void:
 	var pin_hand := hand != Vector3.INF
 	var gdt := Vector3.DOWN * gravity * delta * delta
 	var first := 1 if pin_hand else 0
-	for i in range(first, n - 1):
+	for i in range(first, n if _miss else n - 1):
 		var p := _points[i]
 		var v := (p - _prev[i]) * 0.98
 		_prev[i] = p
 		_points[i] = p + v + gdt
 	var rest := total_length / float(n - 1)
 	for _it in solver_iterations:
-		_points[n - 1] = _anchor
+		if not _miss:
+			_points[n - 1] = _anchor
 		if pin_hand:
 			_points[0] = hand
 		for i in n - 1:
@@ -129,7 +141,7 @@ func _simulate(delta: float, hand: Vector3, total_length: float) -> void:
 			var corr := d * (0.5 * (seg_len - rest) / seg_len)
 			if i > 0 or not pin_hand:
 				_points[i] += corr
-			if i + 1 < n - 1:
+			if i + 1 < n - 1 or _miss:
 				_points[i + 1] -= corr
 
 
@@ -141,7 +153,7 @@ func _rebuild_mesh() -> void:
 		return
 	var alpha := 1.0
 	if phase == Phase.RELEASED:
-		alpha = 1.0 - clampf(_t / fade_time, 0.0, 1.0)
+		alpha = 1.0 - clampf(_t / (fade_time * 0.5 if _miss else fade_time), 0.0, 1.0)
 	var col := Color(1.0, 1.0, 1.0, alpha)
 	_imesh.surface_begin(Mesh.PRIMITIVE_TRIANGLE_STRIP, material)
 	for i in n:
@@ -157,7 +169,7 @@ func _rebuild_mesh() -> void:
 		_imesh.surface_set_uv(Vector2(u, 1.0))
 		_imesh.surface_add_vertex(p + side)
 	_imesh.surface_end()
-	if phase != Phase.SHOOTING:
+	if phase != Phase.SHOOTING and not _miss:
 		_add_splat(cam, col)
 
 

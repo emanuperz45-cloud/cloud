@@ -10,10 +10,14 @@ extends CharacterBody3D
 ## move_forward, move_back, swing, jump, web_zip, point_zip, dive, trick.
 ##
 ## Gatillo de balanceo (swing):
-##  - en el aire: pulsar dispara; MANTENER = misma telaraña (péndulo), el arco se
-##    amortigua hasta quedar colgado; W/S suben o bajan por la telaraña; soltar suelta.
-##  - en el suelo: sprint/parkour (contra una fachada, sube corriendo); saltando
-##    con el clic mantenido se dispara la telaraña en el aire.
+##  - en el aire: pulsar dispara la telaraña AL PUNTO QUE APUNTA LA MIRA (rayo de la
+##    cámara por el centro de la pantalla; si ese punto no sirve, el más cercano válido
+##    dentro de un cono). MANTENER = esa misma telaraña (péndulo), el arco se amortigua
+##    hasta quedar colgado; W/S suben o bajan por la telaraña; soltar suelta. Nunca se
+##    reengancha ni se convierte en wall run mientras se mantiene: cada telaraña es un
+##    clic nuevo.
+##  - en el suelo: sprint/parkour (contra una fachada, sube corriendo); saltando con
+##    el clic aún pulsado se dispara la telaraña en el aire (buffer de swing_buffer s).
 ##  - en una pared: mantener = correr por la pared; sin él, trepar (wall crawl).
 ## Salto (jump): en el swing lanza según la fase (fondo = adelante, final = arriba);
 ## en el aire es Web Zip (el segundo seguido es Quick Zip, sin perder altura); en el
@@ -39,6 +43,7 @@ extends CharacterBody3D
 signal state_changed(previous: int, current: int)
 signal web_fired(hand: int, anchor: Vector3)
 signal web_released(hand: int, perfect: bool)
+signal web_missed(hand: int, target: Vector3)     ## clic sin nada al alcance: la web sale y no engancha
 signal wall_run_started(vertical: bool)
 signal landed(impact_speed: float)
 signal point_launched(perfect: bool)
@@ -101,6 +106,11 @@ var spider_meter := 2.0           ## cargas de Spider-Dash / Spider-Jump (0..spi
 var dash_timer := 0.0             ## > 0 durante el Spider-Dash (gravedad baja, pose de vuelo)
 var vault_timer := 0.0            ## > 0 durante el salto de obstáculo (pose de vault)
 var vault_hand_point := Vector3.ZERO  ## dónde apoya la mano en el vault (cima del obstáculo)
+## Hacia dónde iría la telaraña ahora mismo (null = nada al alcance). Lo usa el HUD.
+var aim_anchor: AnchorFinder.Candidate = null
+var aim_exact := false            ## true = justo el punto apuntado; false = asistido por el cono
+var _swing_buffer := 0.0          ## clic reciente pendiente de disparar (s)
+var _swing_fresh := false         ## el buffer viene de un clic nuevo en el aire (avisa si falla)
 var _loop_mode := false           ## swing enganchado desde una picada: Loop de Loop
 var _vault_a := Vector3.ZERO      ## vault: curva de Bézier a -> c -> b
 var _vault_c := Vector3.ZERO
@@ -159,6 +169,7 @@ func update_swinging_system(delta: float) -> void:
 	trick_timer = maxf(trick_timer - delta, 0.0)
 	land_timer = maxf(land_timer - delta, 0.0)
 	_wall_cooldown = maxf(_wall_cooldown - delta, 0.0)
+	_swing_buffer = maxf(_swing_buffer - delta, 0.0)
 	dash_timer = maxf(dash_timer - delta, 0.0)
 	vault_timer = maxf(vault_timer - delta, 0.0)
 	spider_meter = minf(spider_meter + delta / tuning.spider_meter_recharge, tuning.spider_meter_charges)
@@ -170,6 +181,7 @@ func update_swinging_system(delta: float) -> void:
 	_update_travel_dir(delta)
 	if anchor_finder:
 		anchor_finder.scan(global_position, velocity, travel_dir, delta)
+	_update_aim()
 	_spider_skills()
 
 	match state:
@@ -205,6 +217,33 @@ func _read_input() -> void:
 		_jump_buffer = 0.15
 	if Input.is_action_just_pressed("dive"):
 		_dive_buffer = tuning.corner_turn_buffer
+	if Input.is_action_just_pressed("swing"):
+		_swing_buffer = tuning.swing_buffer
+		_swing_fresh = true
+	elif state == State.GROUNDED and Input.is_action_pressed("swing"):
+		_swing_buffer = tuning.swing_buffer       # esprintando con el clic: al saltar dispara
+		_swing_fresh = false
+
+
+## Rayo de la mira: cámara y dirección por el centro de la pantalla (con la cámara
+## capturada, la retícula). Sin cámara (laboratorios): hacia delante y algo arriba.
+func aim_ray() -> Array[Vector3]:
+	if camera:
+		return [camera.global_position, -camera.global_transform.basis.z]
+	return [global_position, (travel_dir + Vector3.UP * 0.7).normalized()]
+
+
+## Predice el anclaje de cada frame para el marcador del HUD (solo desde estados en los
+## que se puede lanzar o encadenar la siguiente telaraña).
+func _update_aim() -> void:
+	aim_anchor = null
+	aim_exact = false
+	if anchor_finder == null:
+		return
+	if state in [State.FALL, State.DIVE, State.SWING, State.WEB_ZIP, State.GLIDE]:
+		var ray := aim_ray()
+		aim_anchor = anchor_finder.aim_anchor(global_position, ray[0], ray[1])
+		aim_exact = anchor_finder.aim_exact
 
 
 func _wish_dir() -> Vector3:
@@ -406,10 +445,10 @@ func _update_air(delta: float) -> void:
 		return
 	if Input.is_action_just_pressed("point_zip") and _start_point_zip():
 		return
-	var want := Input.is_action_just_pressed("swing") \
-			or (Input.is_action_pressed("swing") and state_time > tuning.reattach_delay)
-	if want:
-		_try_attach()
+	# Solo un clic (reciente) dispara: mantener el clic tras soltar una telaraña no
+	# engancha otra por su cuenta.
+	if _swing_buffer > 0.0 and _try_attach(_swing_fresh):
+		_swing_buffer = 0.0
 
 
 func _start_trick() -> void:
@@ -448,17 +487,27 @@ func _land() -> void:
 # ---------------------------------------------------------------------------
 # Balanceo: mantener = misma telaraña (péndulo que se apaga hasta quedar colgado)
 # ---------------------------------------------------------------------------
-func _try_attach() -> bool:
+## Dispara la telaraña al punto que apunta la mira. report_miss: si no hay nada al
+## alcance, la web sale igualmente y se pierde (web_missed) para dar respuesta al clic.
+func _try_attach(report_miss := false) -> bool:
 	if anchor_finder == null:
 		return false
-	var cand := anchor_finder.best_for(float(hand), global_position, velocity, travel_dir)
+	var ray := aim_ray()
+	var cand := anchor_finder.aim_anchor(global_position, ray[0], ray[1])
 	if cand == null:
-		cand = anchor_finder.best_for(float(-hand), global_position, velocity, travel_dir)
-		if cand == null:
-			return false             # sin geometría válida: no hay swing (nada de anclajes en el aire)
-		hand = -hand
-	if not anchor_finder.validate(cand, global_position + hand_offset):
+		if report_miss:
+			_swing_fresh = false
+			var along := maxf((global_position - ray[0]).dot(ray[1]), 0.0)
+			web_missed.emit(hand, ray[0] + ray[1] * (along + 24.0))
 		return false
+	# Mano del lado del objetivo si está claramente a un lado; si no, se alternan.
+	var lateral := (cand.point - global_position).dot(cam_right)
+	if absf(lateral) > 3.0:
+		hand = HAND_RIGHT if lateral > 0.0 else HAND_LEFT
+	# El swing avanza hacia el anclaje (con el punto casi encima, hacia donde ibas).
+	var to_anchor := RegulatedPendulum.flat(cand.point - global_position)
+	if to_anchor.length() > 5.0:
+		travel_dir = to_anchor.normalized()
 	# Loop de Loop: engancharse en plena picada rápida cierra el arco hasta dar la vuelta.
 	_loop_mode = state == State.DIVE and velocity.length() > tuning.loop_dive_min_speed
 	pendulum.attach(global_position, velocity, cand.point, travel_dir, cand.ground_y,
@@ -466,6 +515,7 @@ func _try_attach() -> bool:
 	_last_loops = 0
 	_predict_timer = 0.0
 	_avoid = Vector3.ZERO
+	_swing_buffer = 0.0
 	_set_state(State.SWING)
 	web_fired.emit(hand, cand.point)
 	return true
@@ -501,9 +551,8 @@ func _update_swing(delta: float) -> void:
 	velocity = (pendulum.pos - global_position) / delta
 	move_and_slide()
 	if get_slide_collision_count() > 0:
+		# Colgado de la telaraña roza la pared (nunca se convierte en wall run ni suelta).
 		var n := get_slide_collision(0).get_normal()
-		if _enter_wall(n, pendulum.vel, true):
-			return
 		pendulum.pos = global_position
 		pendulum.vel = RegulatedPendulum.project_on_plane(pendulum.vel, n)
 	velocity = pendulum.vel
@@ -627,6 +676,11 @@ func _update_zip(delta: float) -> void:
 		web_released.emit(HAND_BOTH, false)
 		_start_glide(false)
 		return
+	if _swing_buffer > 0.0 and aim_anchor != null:
+		# Del zip a un balanceo: la web del zip se suelta y sale la nueva hacia la mira.
+		web_released.emit(HAND_BOTH, false)
+		if _try_attach():
+			return
 	if state_time >= tuning.zip_duration:
 		web_released.emit(HAND_BOTH, false)
 		_set_state(State.FALL)
@@ -678,7 +732,7 @@ func _update_perch() -> void:
 	elif Input.is_action_just_pressed("swing"):
 		velocity = travel_dir * 6.0 + Vector3.UP * 4.0
 		_set_state(State.FALL)
-		_try_attach()
+		_try_attach(true)
 	elif move_input.length() > 0.5:
 		_set_state(State.GROUNDED)    # bajarse del posado caminando
 
@@ -690,18 +744,16 @@ func _try_wall_contact() -> bool:
 	if _wall_cooldown > 0.0:
 		return false
 	for i in get_slide_collision_count():
-		if _enter_wall(get_slide_collision(i).get_normal(), velocity, false):
+		if _enter_wall(get_slide_collision(i).get_normal(), velocity):
 			return true
 	return false
 
 
-func _enter_wall(n: Vector3, v: Vector3, from_swing: bool) -> bool:
+func _enter_wall(n: Vector3, v: Vector3) -> bool:
 	if absf(n.y) > 0.3:
 		return false                 # no es una pared
 	var spd := v.length()
 	var run := Input.is_action_pressed("swing") and spd >= tuning.wall_run_min_speed * 0.5
-	if from_swing and (not run or pendulum.sustain):
-		return false                 # péndulo sostenido: roza la pared sin soltar la telaraña
 	var approach := rad_to_deg(acos(clampf(-v.dot(n) / maxf(spd, 0.001), -1.0, 1.0)))
 	wall_normal = n
 	wall_vertical = approach < tuning.wall_run_vertical_angle_deg
@@ -716,10 +768,7 @@ func _enter_wall(n: Vector3, v: Vector3, from_swing: bool) -> bool:
 			velocity = tangent * _wall_run_speed + Vector3.UP * maxf(v.y, 0.0) * 0.5
 	else:
 		velocity = Vector3.ZERO        # se pega a la pared (wall crawl)
-	if state == State.SWING:
-		pendulum.active = false
-		web_released.emit(hand, false)
-	elif state == State.WEB_ZIP:
+	if state == State.WEB_ZIP:
 		web_released.emit(HAND_BOTH, false)   # la web del zip no puede quedarse colgando
 	_set_state(State.WALL_RUN)
 	wall_crawl = not run
@@ -891,7 +940,7 @@ func _update_glide(delta: float) -> void:
 		return
 	for i in get_slide_collision_count():
 		var n := get_slide_collision(i).get_normal()
-		if absf(n.y) <= 0.3 and _wall_cooldown <= 0.0 and _enter_wall(n, velocity, false):
+		if absf(n.y) <= 0.3 and _wall_cooldown <= 0.0 and _enter_wall(n, velocity):
 			return
 	if get_slide_collision_count() > 0:
 		# Roce: la velocidad real manda (sin perder el estado de las alas).
@@ -905,7 +954,7 @@ func _update_glide(delta: float) -> void:
 	elif Input.is_action_just_pressed("dive"):
 		_set_state(State.DIVE)
 	elif Input.is_action_just_pressed("swing"):
-		_try_attach()                    # si no hay anclaje, sigue planeando
+		_try_attach(true)                # si no hay anclaje, sigue planeando
 	elif _jump_buffer > 0.0 and _zip_cooldown <= 0.0:
 		_jump_buffer = 0.0
 		_start_zip()

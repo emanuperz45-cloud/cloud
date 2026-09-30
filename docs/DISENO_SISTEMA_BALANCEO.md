@@ -28,7 +28,7 @@
 ```mermaid
 flowchart LR
     IN[Input + cámara] --> FSM[TraversalController<br/>FSM]
-    AF[AnchorFinder<br/>abanico de rayos amortizado] -->|mejor candidato por mano| FSM
+    AF[AnchorFinder<br/>rayo de la mira + cono de asistencia] -->|anclaje apuntado| FSM
     FSM -->|attach / step / release| RP[RegulatedPendulum<br/>240 Hz]
     RP -->|posición propuesta| MS[move_and_slide<br/>colisión real]
     MS -->|resync / wall run| FSM
@@ -55,6 +55,24 @@ $g=9{,}81$. En el código cada símbolo tiene el mismo nombre en `swing_core.py`
 ### 1.1 Raycasting y validación de anclajes
 
 **Regla dura:** no existen anclajes en el aire. Si no hay geometría válida (sobre el río, en medio de un parque sin árboles), no hay balanceo: el jugador cae, puede hacer *web zip* debilitado o planear en picada. Es exactamente la restricción del original y es lo que hace que la ciudad sea el *nivel*.
+
+**Quién elige el anclaje.** En la demo lo elige el jugador: el clic dispara **donde apunta la mira** (§1.1-A). El abanico de anclajes ideales (§1.1-B) sigue funcionando por debajo: alimenta la altura de crucero (*skyline*), la mirada anticipatoria del personaje y el autopiloto.
+
+### 1.1-A Anclaje apuntado (el jugador decide)
+
+`AnchorFinder.aim_anchor(p, c, d)` recibe la posición del jugador $\mathbf p$ y el rayo de la cámara por el centro de la pantalla (origen $\mathbf c$, dirección $\hat{\mathbf d}$; con el ratón capturado, la retícula):
+
+1. **Rayo de la mira.** Arranca en el punto del rayo más cercano al jugador, $\mathbf o=\mathbf c+\hat{\mathbf d}\,\max(0,(\mathbf p-\mathbf c)\cdot\hat{\mathbf d})$, para que lo que quede entre la cámara y el jugador (esquinas, muros a la espalda de la cámara) no cuente. Alcance $R=46$ m desde el jugador ($\approx L_{max}$).
+2. **Filtros** (los mismos de `aim_anchor_valid` en `swing_core.py`, con tests): altura sobre el jugador $\ge 5$ m · distancia en $[L_{min},R]$ · $n_y\ge-0{,}5$ · arco sobre el suelo $A_y-(y_{suelo}+h_{clear})\ge L_{min}$ · línea de visión mano→$\mathbf A$ · **pivote alcanzable** $\lVert\mathbf p-\mathbf P_{piv}\rVert\le L_{max}$ (el pivote regulado se desplaza hasta 7 m; si quedara fuera de la cuerda máxima el cuerpo daría un tirón al engancharse). No hay filtro de dirección: se puede enganchar de lado o hacia atrás.
+3. **Punto exacto o asistido.** Si el impacto del rayo sirve, la telaraña se clava *exactamente ahí* (error medido: 0,13–0,35 m). Si no (cielo, calle, un balcón demasiado bajo, fuera de alcance…) se prueban dos anillos de 8 rayos dentro de un cono de 12° (radios 5,4° y 10,2°) y gana el punto **más alto** del anillo más cercano a la mira. Sin candidato → fallo.
+4. **Marcador.** Cada frame (en Fall, Dive, Swing, WebZip y Glide) se calcula el mismo anclaje y el HUD lo dibuja: un anillo cian sobre el punto de impacto y la retícula iluminada cuando hay anclaje; si el punto lo eligió la asistencia (`aim_exact = false`), una línea fina lo une a la retícula. Lo que ves es exactamente donde irá la web.
+5. **Fallo.** Un clic nuevo en el aire sin objetivo emite `web_missed(hand, punta)`: la web sale 24 m por el rayo, no engancha y cae libre (`WebLine.fire_miss`), con el sonido de disparo más suave. No hay penalización.
+
+**Dirección y mano.** Al engancharse, la dirección de viaje del péndulo pasa a ser la horizontal hacia el anclaje (si está a más de 5 m; si no, se conserva). La mano es la del lado del objetivo cuando queda a más de 3 m a un lado de la cámara; si no, se alternan.
+
+**Un clic = una telaraña.** Mantener el clic no dispara otra: tras soltarse (o tras un salto) hace falta un clic nuevo, así que la web nunca salta sola a otro edificio. Un clic dado hasta 0,2 s antes de poder disparar se guarda (`swing_buffer`), y esprintando con el clic pulsado ese buffer se renueva, de modo que saltar con el clic aún pulsado sí dispara al aire. Desde un web zip, un clic suelta la web del zip y engancha a la mira (`--scenario=aim`, fase 7: 0,08 m de error). Colgado de la web, rozar una fachada no la convierte en wall run ni la suelta.
+
+### 1.1-B Abanico de anclajes ideales (asistencia interna)
 
 #### Capa de colisión `Swingable`
 Solo geometría estática del mundo (fachadas, cornisas, antenas, farolas, árboles marcados). Personajes, vehículos y props físicos quedan fuera de la máscara. Superficies prohibidas se marcan con el grupo `no_web` (p. ej. cristal de un evento scriptado).
@@ -108,7 +126,7 @@ Media exponencial de las alturas de anclajes vistos: $\text{skyline}\leftarrow\o
 $y_{crucero}=y_{suelo}+0{,}5\,(\text{skyline}-y_{suelo})$. La usan el regulador de energía y la banda de altitud (§1.3-C/D) para que el jugador no derive hacia el cielo al encadenar balanceos.
 
 #### Alternancia de manos
-Tras cada suelta `hand = -hand`. Si la mano activa no tiene candidato se prueba la otra (y se cambia de mano). Esto produce la oscilación lateral suave característica sin que el jugador tenga que pensar en ella.
+Tras cada suelta `hand = -hand`; al disparar con un objetivo claramente a un lado se usa la mano de ese lado (§1.1-A). Con el abanico (autopiloto y mirada) se prueba la otra mano si la activa no tiene candidato. Esto produce la oscilación lateral suave característica sin que el jugador tenga que pensar en ella.
 
 ### 1.2 Cinemática del péndulo regulado
 
@@ -271,7 +289,7 @@ Referencia: el moveset de traversal de *Marvel's Spider-Man* (2018) según guía
 
 | En el original | Comportamiento | En la demo | Diferencia deliberada |
 |---|---|---|---|
-| **R2** en el aire | Balanceo; mantenido tras un salto dispara la siguiente web | Clic izq / RT | **Mantener = misma telaraña** (petición de diseño): el péndulo no se suelta solo y acaba colgado (§2.1) |
+| **R2** en el aire | Balanceo; el juego elige el anclaje y, mantenido, encadena la siguiente web | Clic izq / RT | **La web va donde apunta la mira** (§1.1-A) y **mantener = misma telaraña** (petición de diseño): el péndulo no se suelta solo, acaba colgado y no salta a otro edificio; cada web es un clic nuevo (§2.1) |
 | **X** en pleno swing | En el punto más bajo lanza hacia delante; al final del arco, hacia arriba | Espacio / A | Mezcla continua según $\theta_s$ (§2.1) |
 | **X** en el aire | *Web Zip*: impulso hacia delante que corrige el rumbo | Espacio / A o E / X | — |
 | *Quick Zip* (habilidad) | Segundo zip sin perder altura | Zip dentro de 1 s del anterior | — |
@@ -301,7 +319,7 @@ stateDiagram-v2
     [*] --> Fall
     Grounded --> Fall: salto o Charge Jump / pierde suelo / Quick Recovery
     Grounded --> WallRun: sprint con clic contra una fachada
-    Fall --> Swing: clic (pulsado o mantenido 0,15 s) + anclaje válido
+    Fall --> Swing: clic (buffer 0,2 s) + punto apuntado válido
     Dive --> Swing: clic (catch de picada)
     Fall --> Dive: picada mientras cae
     Dive --> Fall: suelta picada
@@ -311,7 +329,6 @@ stateDiagram-v2
     PointZip --> Perch: llegada
     Perch --> Fall: salto (Point Launch) / clic
     Swing --> Fall: soltar clic o salto
-    Swing --> WallRun: choque rápido en el primer arco
     Fall --> WallRun: contacto con pared (con clic corre, sin clic trepa)
     WebZip --> WallRun: contacto con pared
     WallRun --> Fall: salto de pared / vault / esquina / picada
@@ -379,11 +396,11 @@ $$
 - Sin inyección: la gravedad asimétrica bombearía energía en cada oscilación y nunca se pararía; con gravedad simétrica y amortiguación la amplitud cae como $e^{-ct/2}$ (dos oscilaciones visibles y quieto a los ~7–15 s según la longitud de cuerda).
 - $\mathbf P_{hang}=\mathbf A+\widehat{(\mathbf P-\mathbf A)}_{xz}\cdot\min(1\,\text{m},\lVert(\mathbf P-\mathbf A)_{xz}\rVert)$: el pivote regulado vuelve al anclaje real, separado 1 m de la fachada hacia el lado de la calle, para que colgado quedes **justo bajo la telaraña** y no torcido.
 - $u\in[-1,1]$ = W/S: subir/bajar por la telaraña a 5 m/s ($L\ge4$ m; nunca por debajo del *clearance*). Subir conserva el momento angular (§1.2).
-- Chocar contra una fachada en modo sostenido **no suelta la web**: el cuerpo roza y sigue colgado. Solo el primer arco, a más de 4,5 m/s, se convierte en wall run (como en el original).
+- Chocar contra una fachada **no suelta la web** ni la convierte en wall run (ni en el primer arco): el cuerpo roza y sigue en el péndulo hasta que el jugador suelta el clic. Para correr por una fachada hay que soltarse y volver a tocarla.
 
-Tests: `HoldToHangTests` (Python) comprueban que no hay suelta, que queda quieto bajo el anclaje y el reel. En Godot, el escenario `--scenario=hang` mantiene el clic: una sola web, quieto a los 6,9 s, y W sube de 12,6 m a 5,1 m de cuerda.
+Tests: `HoldToHangTests` (Python) comprueban que no hay suelta, que queda quieto bajo el anclaje y el reel. En Godot, el escenario `--scenario=hang` apunta, hace clic y lo mantiene 26 s: una sola web, quieto a los 11 s, y W sube de 21,4 m a 13,9 m de cuerda. El escenario `--scenario=aim` (§1.1-A) comprueba con un panel flotante que la telaraña cae a 0,16 m de lo apuntado, que sigue en el mismo anclaje 2,3 s aunque la mira apunte a otro sitio desde el segundo 1,5 (0 s de wall run), que tras un salto con el clic aún mantenido y un objetivo válido a la vista **no se dispara otra web** (30 fotogramas con objetivo, 1 web en total), que un clic nuevo dispara a 0,35 m del punto apuntado, que la asistencia elige un punto de la cara a 3 m bajo el borde cuando la mira pasa 6° por encima, que cielo y suelo no dan objetivo (`web_missed`) y que un clic durante un web zip engancha a la mira.
 
-**Salidas del estado:** soltar el clic (suelta manual, evalúa ventana perfecta) · salto (*swing jump*, abajo) · tocar el suelo · choque rápido en el primer arco (wall run).
+**Salidas del estado:** soltar el clic (suelta manual, evalúa ventana perfecta) · salto (*swing jump*, abajo) · tocar el suelo · fin del Loop de Loop.
 
 **Swing jump según la fase** (como en el original): con $t=\operatorname{smoothstep}(5^\circ,45^\circ,\theta_s)$,
 $$
@@ -443,7 +460,7 @@ El arrastre horizontal es casi nulo (0,04 s⁻¹): el momento de la suelta se co
 
 ### 2.4 Pared: Wall Run, Wall Crawl, esquinas y cornisas
 
-**Entrada** (desde Fall, WebZip, sprint en el suelo, o el primer arco del swing) cuando una colisión tiene $\lvert m_y\rvert\le0{,}3$. **Con el clic mantenido y $v\ge4{,}5$ m/s se corre; sin clic, se trepa (queda pegado).** Ángulo de aproximación $\gamma=\angle(\mathbf v,-\hat{\mathbf m})$:
+**Entrada** (desde Fall, WebZip, Glide o sprint en el suelo; nunca desde un swing con la web puesta) cuando una colisión tiene $\lvert m_y\rvert\le0{,}3$. **Con el clic mantenido y $v\ge4{,}5$ m/s se corre; sin clic, se trepa (queda pegado).** Ángulo de aproximación $\gamma=\angle(\mathbf v,-\hat{\mathbf m})$:
 
 | Modo | Condición | Movimiento |
 |---|---|---|
@@ -451,7 +468,7 @@ El arrastre horizontal es casi nulo (0,04 s⁻¹): el momento de la suelta se co
 | Carrera horizontal | clic, $\gamma\ge40^\circ$ | a lo largo de la tangente, nivelada; se sostiene con el clic |
 | Trepar (*wall crawl*) | sin clic | stick relativo a la pared a 5 m/s, sin gravedad; quieto si no hay input |
 
-Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia donde apunte el stick (arriba por defecto). Si venía de un swing, la web se suelta (`web_released`). **Nunca hay un golpe seco contra la pared**: la energía se reorienta (pilar 1).
+Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia donde apunte el stick (arriba por defecto). **Nunca hay un golpe seco contra la pared**: la energía se reorienta (pilar 1).
 
 **Acciones:** salto corriendo en vertical = **tirón de telaraña** hacia arriba (+14 m/s, máx. 30) · salto trepando o en horizontal = salto de pared $11\,\hat{\mathbf m}+9\,\hat{\mathbf y}+0{,}6\,\mathbf v_{xz}$ · picada trepando = soltarse.
 
@@ -463,7 +480,7 @@ Soltar el clic corriendo = pasar a trepar; volver a mantenerlo = correr hacia do
 
 ### 2.5 Suelo: sprint, Charge Jump, aterrizajes y Quick Recovery
 
-- **Sprint:** clic mantenido + dirección → 18 m/s (10 sin clic). Contra una fachada → carrera vertical. Saltar con el clic mantenido dispara la telaraña en el aire (como R2+X en el original).
+- **Sprint:** clic mantenido + dirección → 18 m/s (10 sin clic). Contra una fachada → carrera vertical. Saltar con el clic aún pulsado dispara la telaraña en el aire hacia donde apunta la mira (como R2+X en el original).
 - **Charge Jump:** mantener salto carga en 0,7 s; al soltar $v_y=\operatorname{lerp}(9,\,25,\,c^2)$ + 4c m/s hacia delante. Un toque = salto normal. El personaje se agacha en proporción a la carga (*squash*) y el HUD muestra el %.
 - **Aterrizaje:** $\lvert v_y\rvert>25$ → **superhéroe** (rodilla y puño al suelo, frena, 0,7 s); $\lVert\mathbf v_{xz}\rVert>8$ → **rodada** (voltereta, conserva inercia, 0,45 s); si no, suave.
 - **Quick Recovery:** salto durante la rodada → vuelve al aire con $\max(v_{xz},12)$ hacia delante y 13 m/s hacia arriba.
@@ -826,7 +843,9 @@ Los nombres coinciden con `SwingTuning` en Python y GDScript. **Fuente de verdad
 | `release_band_height` | 12 m | Por encima de crucero + 12 m no hay boost vertical |
 | `hang_damping` / `hang_pivot_rate` / `hang_wall_offset` | 0,75 s⁻¹ / 0,8 s⁻¹ / 1 m | Péndulo sostenido: amortiguación, convergencia al anclaje y separación de la fachada |
 | `reel_climb_speed` / `hang_min_length` | 5 m/s / 4 m | Subir/bajar por la telaraña colgado |
-| `reattach_delay` | 0,15 s | Con el clic mantenido en el aire, espera antes de disparar (salto + clic desde el suelo) |
+| `aim_max_distance` / `aim_min_height` | 46 m / 5 m | Alcance de la telaraña (≈ `rope_max`) y altura mínima del anclaje sobre el jugador |
+| `aim_assist_deg` | 12° | Cono de asistencia si el punto exacto no sirve (dos anillos de 8 rayos a 0,45 y 0,85 de este radio) |
+| `swing_buffer` | 0,2 s | Un clic dado justo antes de poder disparar sigue valiendo (también salto + clic desde el suelo) |
 | `swing_jump_forward` / `swing_jump_up` / `hang_jump_up` | 9 / 9 / 12 m/s | Salto en el swing según fase / salto desde colgado |
 | `run_speed` / `sprint_speed` / `charge_jump_speed` / `charge_jump_time` | 10 / 18 m/s / 25 m/s / 0,7 s | Carrera, sprint y Charge Jump |
 | `quick_recovery_window` / `quick_recovery_up` | 0,45 s / 13 m/s | Quick Recovery |
@@ -938,8 +957,14 @@ void TraversalSystem::UpdateSwingingSystem(float dt)
                 : Length(Flat(body.velocity)) > 2.f ? Normalize(Flat(body.velocity)) : travelDir;
     travelDir = Normalize(Slerp(travelDir, target, 1.f - exp(-4.f * dt)));
 
-    // --- 2. Anclajes: abanico amortizado, candidatos listos antes del input --
+    if (in.swingPressed) { swingBuffer = T.swingBuffer; }             // un clic = una telaraña
+    else if (state == State::Grounded && in.swingHeld) swingBuffer = T.swingBuffer;  // sprint -> salto
+    swingBuffer = max(swingBuffer - dt, 0.f);
+
+    // --- 2. Anclajes: abanico amortizado (crucero, mirada) y anclaje apuntado --
     anchorFinder.Scan(body.position, body.velocity, travelDir, /*raysThisFrame*/ 12);
+    aimAnchor = AirborneState(state) ? anchorFinder.AimAnchor(body.position, camera.origin, camera.forward)
+                                     : nullptr;                       // §1.1-A; el HUD lo dibuja
 
     // --- 3. FSM ---------------------------------------------------------------
     switch (state)
@@ -960,8 +985,7 @@ void TraversalSystem::UpdateSwingingSystem(float dt)
         // 3c. El solver propone, la colisión real dispone
         CollisionResult hit = body.MoveTo(pendulum.pos, dt);  // move_and_slide
         if (hit.valid) {
-            // Solo el primer arco (rápido) se convierte en wall run; sostenido, roza sin soltar.
-            if (!pendulum.sustain && TryEnterWallRun(hit.normal, pendulum.vel)) break;
+            // Colgado de la web se roza la fachada: ni se suelta ni pasa a wall run.
             pendulum.pos = body.position;                     // resync
             pendulum.vel = ProjectOnPlane(pendulum.vel, hit.normal);
         }
@@ -986,8 +1010,8 @@ void TraversalSystem::UpdateSwingingSystem(float dt)
         else if (dive && !in.diveHeld)               SetState(State::Fall);
         if (in.zipPressed && zipCooldown <= 0.f)     { StartWebZip(); break; }
         if (in.pointZipPressed && StartPointZip())   break;
-        if (in.swingPressed || (in.swingHeld && stateTime > T.reattachDelay))
-            TryAttach();                              // §1.1 + §1.3-A/B
+        if (swingBuffer > 0.f && TryAttach(/*reportMiss*/ in.swingPressed))   // §1.1-A + §1.3-A/B
+            swingBuffer = 0.f;                        // solo un clic dispara; mantenerlo no reengancha
         break;
     }
     case State::WebZip:   UpdateWebZip(dt, wish);  break;
@@ -1211,8 +1235,8 @@ Casos: `idle walk run sprint swing swing_fast hang climb rise fall flip_tuck fli
 
 | Pieza | Validación realizada |
 |---|---|
-| Física (Python) | 27 tests unitarios (péndulo sostenido, loop con y sin *tighten*, planeo: fineza, picado/encabritado, pérdida con histéresis, viraje rápido a cualquier velocidad, impulso en picada, túnel con techo y centrado, corriente con inercia) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
-| Demo (Godot) | Autopiloto con escenarios `tour`, `hang` (mantener el clic: 1 sola web, quieto a los 7 s, W sube 12,6 → 5,1 m), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 205 km/h a altura casi constante; picada 48,6 m/s + alas = 58,6 m/s; viraje de 78°/s a 58 m/s; timón de cámara 70° en 1,5 s; corriente +9 m) `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), `run` (sprint con curva) y `sm2` (Loop de Loop con salida a 57 m/s, Spider-Dash 15 → 36,9 m/s, Spider-Jump $v_y=26$, vault de 0,32 s sobre un aire acondicionado de 1,1 m, salto de borde de una azotea de 22 m), con el motor oficial y con la plantilla slim |
+| Física (Python) | 31 tests unitarios (anclaje apuntado: válido en cualquier dirección, rechazo de puntos bajos, lejanos, voladizos, arco sin sitio y pivote fuera de la cuerda máxima; péndulo sostenido, loop con y sin *tighten*, planeo: fineza, picado/encabritado, pérdida con histéresis, viraje rápido a cualquier velocidad, impulso en picada, túnel con techo y centrado, corriente con inercia) + simulador; `python3 -m unittest discover -s tools/swing_lab` |
+| Demo (Godot) | Autopiloto con escenarios `tour` (apunta la mira al anclaje, clic, suelta, repite), `hang` (apunta, clic y lo mantiene: 1 sola web, quieto a los 11 s, W sube 21,4 → 13,9 m), `aim` (telaraña a 0,16 m de lo apuntado, mismo anclaje con la mira en otro sitio, sin reenganche ni wall run al mantener, clic nuevo a 0,35 m, cono de asistencia, cielo y suelo sin objetivo), `moves` (Charge Jump, Web/Quick Zip, sprint → wall run → vault, trepar, salto de pared), `glide` (túnel: 205 km/h a altura casi constante; picada 48,6 m/s + alas = 58,6 m/s; viraje de 78°/s a 58 m/s; timón de cámara 70° en 1,5 s; corriente +9 m) `sling` (carga 100 % → 58 m/s a 45°, cancelación, loop con truco mantenido), `run` (sprint con curva) y `sm2` (Loop de Loop con salida a 57 m/s, Spider-Dash 15 → 36,9 m/s, Spider-Jump $v_y=26$, vault de 0,32 s sobre un aire acondicionado de 1,1 m, salto de borde de una azotea de 22 m), con el motor oficial y con la plantilla slim |
 | Baker de Blender | Test end-to-end con `bpy` 5.0.1 (trayectoria < 1 mm, curvas, IK, GLB con 42 canales) |
 | GDScript | Compila sin errores en Godot 4.7.2; la demo corre 120 s con autopiloto sin errores (balanceo, picada, wall run, aterrizajes) y el `.exe` exportado se validó cargando su PCK embebido. `AnimationTree`, IK de esqueleto y *look-at* no se han probado con un rig real (la demo usa un maniquí procedural) |
 

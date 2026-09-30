@@ -21,6 +21,8 @@ const UP_OFFSETS := [-8.0, 0.0, 8.0]
 const LATERAL_MULTS := [0.6, 1.0, 1.6, 2.4, -1.0, -2.0]
 const MAX_CANDIDATES := 48
 const MERGE_DISTANCE := 1.5
+const AIM_RINGS := [0.45, 0.85]     ## radios del cono de asistencia (fracción de aim_assist_deg)
+const AIM_SPOKES := 8
 
 @export var tuning: SwingTuning
 ## Capa "Swingable": solo geometría estática del mundo. Personajes, vehículos
@@ -34,7 +36,9 @@ const MERGE_DISTANCE := 1.5
 var exclude: Array[RID] = []
 var skyline := 80.0            ## EMA de la altura de los anclajes vistos
 var ground_estimate := 0.0
+var aim_exact := false         ## el último aim_anchor() cayó justo donde apunta la mira
 
+var _probe_pendulum: RegulatedPendulum
 var _candidates: Array[Candidate] = []
 var _cursor := 0
 var _clock := 0.0
@@ -186,6 +190,73 @@ func validate(c: Candidate, hand_pos: Vector3) -> bool:
 	var q := PhysicsRayQueryParameters3D.create(hand_pos, c.point + dir * 0.5, swingable_mask, exclude)
 	var hit := space.intersect_ray(q)
 	return not hit.is_empty() and hit.position.distance_to(c.point) < 0.75
+
+
+## Anclaje al que apunta la mira. El rayo sale de la cámara por el centro de la
+## pantalla (cam_pos, aim); arranca a la altura del personaje para que lo que haya entre
+## la cámara y el jugador (esquinas, paredes a su espalda) no cuente. Si el punto exacto
+## no sirve (cielo, calle, demasiado bajo...) se buscan puntos válidos en anillos
+## crecientes dentro del cono de asistencia y gana el más alto del anillo más cercano.
+## Devuelve null si no hay nada al alcance; aim_exact indica si es el punto apuntado.
+func aim_anchor(pos: Vector3, cam_pos: Vector3, aim: Vector3) -> Candidate:
+	aim_exact = false
+	var space := get_world_3d().direct_space_state
+	var dir := aim.normalized()
+	var origin := cam_pos + dir * maxf((pos - cam_pos).dot(dir), 0.0)
+	var hand := pos + Vector3.UP * hand_height
+	var c := _aim_ray(space, origin, dir, pos, hand)
+	if c:
+		aim_exact = true
+		return c
+	var u := dir.cross(Vector3.UP)
+	if u.length_squared() < 1e-4:
+		u = dir.cross(Vector3.RIGHT)
+	u = u.normalized()
+	var v := dir.cross(u).normalized()
+	for ring in AIM_RINGS.size():
+		var off := tan(deg_to_rad(tuning.aim_assist_deg * AIM_RINGS[ring]))
+		var best: Candidate = null
+		for k in AIM_SPOKES:
+			var a := TAU * (float(k) + 0.5 * ring) / AIM_SPOKES
+			var d := (dir + (u * cos(a) + v * sin(a)) * off).normalized()
+			var cand := _aim_ray(space, origin, d, pos, hand)
+			if cand and (best == null or cand.point.y > best.point.y):
+				best = cand
+		if best:
+			return best
+	return null
+
+
+func _aim_ray(space: PhysicsDirectSpaceState3D, origin: Vector3, dir: Vector3, pos: Vector3,
+		hand: Vector3) -> Candidate:
+	var reach := tuning.aim_max_distance + origin.distance_to(pos)
+	var hit := space.intersect_ray(PhysicsRayQueryParameters3D.create(
+			origin, origin + dir * reach, swingable_mask, exclude))
+	if hit.is_empty():
+		return null
+	if hit.collider is Node and (hit.collider as Node).is_in_group("no_web"):
+		return null
+	var c := Candidate.new()
+	c.point = hit.position
+	c.normal = hit.normal
+	c.collider_id = hit.collider_id
+	c.stamp = _clock
+	# Filtros baratos antes de sondear el suelo (mismas reglas que aim_anchor_valid en Python).
+	var rel := c.point - pos
+	var dist := rel.length()
+	if rel.y < tuning.aim_min_height or dist < tuning.rope_min or dist > tuning.aim_max_distance:
+		return null
+	if c.normal.y < -0.5:
+		return null
+	c.ground_y = _probe_ground(space, pos, c.point, c.normal)
+	if c.point.y - (c.ground_y + tuning.ground_clearance) < tuning.rope_min:
+		return null
+	if _probe_pendulum == null:
+		_probe_pendulum = RegulatedPendulum.new(tuning)
+	var travel := RegulatedPendulum.safe_normalized(RegulatedPendulum.flat(rel), Vector3.FORWARD)
+	if pos.distance_to(_probe_pendulum.solve_pivot(pos, c.point, travel)) > tuning.rope_max:
+		return null
+	return c if validate(c, hand) else null
 
 
 ## Point launch: puntos de posado marcados (Node3D en el grupo "perch_points"),

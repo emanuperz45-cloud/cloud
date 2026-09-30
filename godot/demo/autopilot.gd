@@ -3,8 +3,10 @@ extends Node
 ## Piloto automático para probar builds sin interfaz (y sacar capturas). Pulsa las
 ## mismas acciones de InputMap que un jugador, así prueba el control real.
 ##   --autopilot=SEGUNDOS  --scenario=tour|hang|moves  --shots=t1,t2  --shot-prefix=RUTA
-##  tour : balanceo como un jugador (suelta el clic al subir) recorriendo la ciudad
-##  hang : mantiene el clic sin soltar -> péndulo en la misma telaraña hasta colgar
+##  tour : balanceo como un jugador (apunta la mira a un anclaje, clic, suelta al subir)
+##  hang : apunta, hace clic y lo mantiene -> péndulo en la misma telaraña hasta colgar
+##  aim  : la telaraña va donde apunta la mira (punto exacto, cono de asistencia, fallo),
+##         y mantener el clic no reengancha ni se convierte en wall run
 ##  moves: charge jump, web zip + quick zip, truco, colgarse y subir por la web,
 ##         sprint contra una fachada, wall run, trepar y salto de pared
 ##  pose : personaje quieto en la calle con la cámara de frente y cerca (traje)
@@ -40,7 +42,13 @@ func _ready() -> void:
 		hud.set_help_visible(false)      # capturas limpias (salvo --show-help)
 	player.web_fired.connect(func(_h: int, a: Vector3) -> void:
 		_count("web_fired")
+		if OS.has_environment("AP_DEBUG"):
+			print("[dbg] t=%.2f web_fired hand=%s state=%s anchor=%s player=%s aim=%s" % [_t, _h, player.state, a, player.global_position, player.aim_ray()])
 		_anchor = a)
+	player.web_missed.connect(func(_h: int, _tip: Vector3) -> void:
+		_count("web_missed")
+		if OS.has_environment("AP_DEBUG"):
+			print("[dbg] t=%.2f web_missed state=%s" % [_t, player.state]))
 	player.web_released.connect(func(_h: int, perfect: bool) -> void:
 		_count("perfect_release" if perfect else "release"))
 	player.wall_run_started.connect(func(v: bool) -> void: _count("wall_run" if v else "wall_contact"))
@@ -94,6 +102,36 @@ func _tap(action: String) -> void:
 	_tapped.append(action)
 
 
+## Como un jugador: apunta la mira al mejor anclaje que ve y hace clic (cada `retry` s
+## hasta que engancha). Devuelve false si no ve ninguno.
+func _aim_and_tap(retry := 0.15) -> bool:
+	var finder := player.anchor_finder
+	var p := player.global_position
+	var cand := finder.best_for(float(player.hand), p, player.velocity, player.travel_dir)
+	if cand == null:
+		cand = finder.best_for(float(-player.hand), p, player.velocity, player.travel_dir)
+	if cand == null:
+		return false
+	camera_rig.aim_at(cand.point)
+	if player.state_time > 0.12 and fmod(_t, retry) < 1.0 / 60.0 * 1.01:
+		_tap("swing")
+	return true
+
+
+## Mantener el clic mientras `want`: en el aire, si no hay telaraña apunta y dispara; una
+## vez enganchado lo mantiene (soltar = soltarse); en el suelo y en la pared es el
+## sprint / la carrera vertical.
+func _swing_click(want: bool) -> void:
+	if not want:
+		_press("swing", false)
+	elif player.state in [TraversalController.State.SWING, TraversalController.State.WALL_RUN,
+			TraversalController.State.GROUNDED]:
+		_press("swing", true)
+	else:
+		_press("swing", false)
+		_aim_and_tap()
+
+
 func _physics_process(delta: float) -> void:
 	_t += delta
 	var p := player.global_position
@@ -108,6 +146,8 @@ func _physics_process(delta: float) -> void:
 	_tapped.clear()
 
 	match scenario:
+		"aim":
+			_aim()
 		"hang":
 			_hang()
 		"moves":
@@ -150,23 +190,29 @@ func _physics_process(delta: float) -> void:
 		main.get_tree().quit()
 
 
-# --- tour: balanceo de jugador (suelta al subir, vuelve a disparar) ---------
+# --- tour: balanceo de jugador (apunta, clic, suelta al subir, vuelve a apuntar) ---
 func _tour() -> void:
 	var p := player.global_position
 	var around := atan2(p.x, p.z) + 0.5
 	var waypoint := Vector3(sin(around), 0.0, cos(around)) * 300.0
-	camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
-	_press("move_forward", true)
 	var st := player.state
 	if st == TraversalController.State.SWING:
 		var pend := player.pendulum
+		camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
 		_press("swing", not (pend.swing_angle_deg >= 35.0 or pend.sustain))
 	elif st == TraversalController.State.GROUNDED:
 		_press("swing", true)                               # sprint...
 		if player.state_time > 0.3 and fmod(player.state_time, 1.0) < 0.02:
-			_tap("jump")                                    # ...y salto: el clic mantenido dispara
+			_tap("jump")                                    # ...y salto: el clic dispara al aire
+		camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
+	elif st == TraversalController.State.WALL_RUN:
+		_press("swing", true)                               # corre por la fachada hasta la cornisa
+		camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
 	else:
-		_press("swing", player.state_time > 0.12)
+		_press("swing", false)
+		if not _aim_and_tap():
+			camera_rig.look_towards(RegulatedPendulum.flat(waypoint - p).normalized())
+	_press("move_forward", true)
 	var cycle := fmod(_t, 9.0)
 	_press("dive", cycle > 6.0 and cycle < 7.0 and p.y > 45.0)
 	if st == TraversalController.State.FALL and fmod(_t, 7.0) < 0.02 and player.velocity.y < 0.0:
@@ -177,7 +223,7 @@ func _tour() -> void:
 
 # --- hang: mantener el clic sin soltarlo -----------------------------------
 func _hang() -> void:
-	_press("swing", true)
+	_swing_click(true)
 	var sw := player.state == TraversalController.State.SWING
 	if sw and not _mark.has("attach_t"):
 		_mark["attach_t"] = _t
@@ -190,9 +236,125 @@ func _hang() -> void:
 		_mark["len_before_climb"] = snappedf(player.pendulum.length, 0.01)
 	if absf(_t - (duration - 1.2)) < 0.01:
 		_mark["len_after_climb"] = snappedf(player.pendulum.length, 0.01)
-	_stats["hang"] = {"still_on_web": sw, "speed": snappedf(player.pendulum.speed, 0.01),
+	_stats["hang"] = {"still_on_web": sw, "webs_fired": _stats.events.get("web_fired", 0), "speed": snappedf(player.pendulum.speed, 0.01),
 			"sustain": player.pendulum.sustain, "marks": _mark,
 			"dist_to_anchor": snappedf(player.global_position.distance_to(_anchor), 0.01)}
+
+
+# --- aim: la telaraña va donde apunta la mira ----------------------------------
+## Un panel flotante sobre la ciudad da puntos de mira conocidos: disparo exacto,
+## mantener el clic (no reengancha ni hace wall run), un clic nuevo dispara a lo
+## apuntado, cono de asistencia y fallo con cielo o suelo.
+const AIM_A := Vector3(0.0, 302.0, -36.0)     # punto apuntado en la cara delantera del panel
+const AIM_B := Vector3(0.0, 300.0, -40.0)     # ídem en su cara trasera (el arco pasa por debajo)
+const AIM_START := Vector3(0.0, 290.0, 0.0)
+
+
+func _board(center: Vector3, size: Vector3) -> void:
+	var body := StaticBody3D.new()
+	var shape := CollisionShape3D.new()
+	var box := BoxShape3D.new()
+	box.size = size
+	shape.shape = box
+	body.add_child(shape)
+	var mesh := MeshInstance3D.new()
+	var bm := BoxMesh.new()
+	bm.size = size
+	mesh.mesh = bm
+	body.add_child(mesh)
+	body.position = center
+	main.add_child(body)
+
+
+func _aim_start() -> void:
+	_place(AIM_START, Vector3.FORWARD)
+	player.state = TraversalController.State.FALL
+	player.velocity = Vector3(0.0, 0.0, -2.0)
+
+
+func _aim() -> void:
+	var fired: int = _stats.events.get("web_fired", 0)
+	# Clic mantenido por tramos: (1) primera telaraña hasta el salto, (4) clic nuevo, (5) asistida,
+	# (7) desde un web zip.
+	_press("swing", (_t > 0.6 and _t < 3.6) or (_t > 3.7 and _t < 5.5) or (_t > 7.4 and _t < 7.8)
+			or (_t > 10.7 and _t < 12.0))
+	if _at(0.02):
+		_board(Vector3(0.0, 300.0, -38.0), Vector3(60.0, 40.0, 4.0))     # caras en z = -36 y -40
+		_aim_start()
+	# 1) Mirar al punto A y disparar: la telaraña debe clavarse justo ahí.
+	if _t > 0.2 and _t < 1.5:
+		camera_rig.aim_at(AIM_A)
+	elif _t >= 1.5 and _t < 3.0:
+		camera_rig.aim_at(AIM_B)            # mirar a otro lado no cambia la telaraña ya enganchada
+	if _at(0.5):
+		_mark["1_aim_exact"] = player.aim_exact
+		_mark["1_aim_error_m"] = snappedf(player.aim_anchor.point.distance_to(AIM_A), 0.01) \
+				if player.aim_anchor else -1.0
+	if _at(0.9):
+		_mark["1_state_after_click"] = hud._state_name()
+		_mark["1_shot_error_m"] = snappedf(player.pendulum.anchor.distance_to(AIM_A), 0.01)
+	# 2) Colgado con el clic mantenido y la mira en otro sitio: misma telaraña, sin wall run.
+	if _at(2.9):
+		_mark["2_same_anchor"] = player.pendulum.anchor.distance_to(AIM_A) < 1.5
+		_mark["2_webs_fired"] = fired
+		_mark["2_wall_run_s"] = _stats.substates.get("WALL RUN", 0.0)
+		_mark["2_state"] = hud._state_name()
+	# 3) Salto con el clic aún mantenido y un objetivo válido a la vista (la cara trasera
+	#    del panel, tras cruzar por debajo): no reengancha.
+	if _at(3.0):
+		_tap("jump")
+	if _t > 3.1 and _t < 5.5:
+		camera_rig.aim_at(AIM_B)
+		if player.aim_anchor and _t < 3.6:
+			_mark["3_valid_aim_frames"] = _mark.get("3_valid_aim_frames", 0) + 1
+	if _at(3.55):
+		_mark["3_webs_fired_while_held"] = fired
+		_mark["3_state"] = hud._state_name()
+	# 4) Soltar y volver a pulsar: el clic nuevo dispara a lo apuntado (cara trasera).
+	if _at(4.0):
+		_mark["4_webs_fired"] = fired
+		_mark["4_shot_error_m"] = snappedf(player.pendulum.anchor.distance_to(AIM_B), 0.01)
+	# 5) Cono de asistencia: la mira pasa 6° por encima del borde del panel A.
+	if _at(7.0):
+		_aim_start()
+	if _t > 7.0 and _t < 7.7:
+		camera_rig.set_look(0.0, deg_to_rad(46.0))
+	if _at(7.3):
+		_mark["5_assist_found"] = player.aim_anchor != null
+		_mark["5_assist_exact"] = player.aim_exact
+		_mark["5_assist_y"] = snappedf(player.aim_anchor.point.y, 0.1) if player.aim_anchor else -1.0
+	if _at(7.6):
+		_mark["5_fired_on_assist"] = hud._state_name()
+	# 6) Cielo y suelo: nada al alcance -> la web sale y se pierde.
+	if _at(8.5):
+		_aim_start()
+	if _t > 8.5 and _t < 9.3:
+		camera_rig.set_look(0.0, deg_to_rad(80.0))
+	if _at(8.9):
+		_mark["6_sky_target"] = player.aim_anchor != null
+		_tap("swing")
+	if _at(9.2):
+		_mark["6_webs_fired"] = fired
+		_mark["6_state"] = hud._state_name()
+	if _at(9.5):
+		_aim_start()
+	if _t > 9.5 and _t < 10.3:
+		camera_rig.set_look(0.0, deg_to_rad(-75.0))
+	if _at(9.9):
+		_mark["6_ground_target"] = player.aim_anchor != null
+	# 7) Del web zip a un balanceo: un clic durante el zip suelta su web y engancha a la mira.
+	if _at(10.5):
+		_aim_start()
+	if _t > 10.5 and _t < 11.5:
+		camera_rig.aim_at(AIM_A)
+	if _at(10.6):
+		_tap("jump")
+	if _at(10.65):
+		_mark["7_state_zip"] = hud._state_name()
+	if _at(11.2):
+		_mark["7_state_after_click"] = hud._state_name()
+		_mark["7_shot_error_m"] = snappedf(player.pendulum.anchor.distance_to(AIM_A), 0.01)
+	_stats["aim"] = _mark
 
 
 # --- moves: secuencia guionizada del moveset ------------------------------
@@ -213,8 +375,14 @@ func _moves() -> void:
 	_press("move_forward", (_t > 2.7 and _t < 2.9) or (_t > 12.0 and _t < 13.0) or _t > 17.0)
 	if _at(2.8):
 		_tap("trick")
-	# Colgarse: mantener el clic 10 s; W para subir por la web al final.
-	_press("swing", (_t > 3.4 and _t < 14.0) or (_t > 16.5 and _t < 19.5))
+	# Colgarse: desde el aire (punto de reaparición), apuntar, clic y mantenerlo 10 s;
+	# W para subir por la web al final.
+	if _at(3.3):
+		main.respawn()
+	if _t > 3.4 and _t < 14.0:
+		_swing_click(true)
+	else:
+		_press("swing", _t > 16.5 and _t < 19.5)
 	if _at(14.0):
 		_mark["hang_speed_before_release"] = snappedf(player.pendulum.speed, 0.01)
 		_mark["hang_length"] = snappedf(player.pendulum.length, 0.01)
@@ -340,7 +508,10 @@ func _sm2() -> void:
 		if not roof.is_empty():
 			_place(Vector3(roof[0] + roof[2] * 0.5, roof[4] + 0.95, roof[1] + roof[3] * 0.5), Vector3.LEFT)
 			_mark["ledge_roof_h"] = snappedf(roof[4], 0.1)
-	_press("swing", (_t > 1.6 and _t < 5.0) or (_t > 10.1 and _t < 14.0))
+	if _t > 1.6 and _t < 5.0:
+		_swing_click(true)                    # Loop de Loop: en la picada, apunta y clic
+	else:
+		_press("swing", _t > 10.1 and _t < 14.0)
 	_stats["sm2"] = _mark
 
 
@@ -397,7 +568,10 @@ func _sling() -> void:
 		_place(Vector3(0.0, 60.0, 30.0), Vector3.FORWARD)
 		player.state = TraversalController.State.FALL
 		player.velocity = Vector3(0.0, -6.0, -44.0)
-	_press("swing", _t > 7.05 and _t < 13.0)
+	if _t > 7.05 and _t < 13.0:
+		_swing_click(true)
+	else:
+		_press("swing", false)
 	_press("trick", _t > 7.3 and _t < 10.0)
 	_stats["sling"] = _mark
 

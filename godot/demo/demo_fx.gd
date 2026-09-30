@@ -36,6 +36,7 @@ func _ready() -> void:
 	add_child(rect)
 	_build_audio()
 	controller.web_fired.connect(func(_h: int, _a: Vector3) -> void: _play("thwip", -6.0, 0.12))
+	controller.web_missed.connect(func(_h: int, _t: Vector3) -> void: _play("thwip", -12.0, 0.12))
 	controller.web_released.connect(func(_h: int, perfect: bool) -> void:
 		if controller.velocity.length() > 14.0:
 			_play("whoosh", -8.0 if not perfect else -3.0, 0.1))

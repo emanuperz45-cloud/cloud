@@ -89,6 +89,7 @@ func _ready() -> void:
 	if anim_tree:
 		_playback = anim_tree.get(P_PLAYBACK)
 	controller.web_fired.connect(_on_web_fired)
+	controller.web_missed.connect(_on_web_missed)
 	controller.web_released.connect(_on_web_released)
 	controller.landed.connect(_on_landed)
 	controller.trick_started.connect(_on_trick)
@@ -180,6 +181,16 @@ func _on_web_fired(hand: int, anchor: Vector3) -> void:
 	if web:
 		web.fire(_socket(hand), anchor)
 		_active_webs.append(web)
+
+
+## Clic sin objetivo: el brazo lanza y la web sale hacia el vacío, sin enganchar.
+func _on_web_missed(hand: int, tip: Vector3) -> void:
+	if anim_tree:
+		anim_tree.set(P_FIRE_R if hand >= TraversalController.HAND_BOTH else P_FIRE_L,
+				AnimationNodeOneShot.ONE_SHOT_REQUEST_FIRE)
+	var web := _pick_web()
+	if web:
+		web.fire_miss(_socket(hand), tip)
 
 
 ## Usa una web libre; si no hay, recicla una que ya se está soltando.
@@ -382,6 +393,8 @@ func _look_point() -> Vector3:
 				return c.pendulum.anchor
 		TraversalController.State.DIVE:
 			return c.global_position + c.velocity * 0.8
+	if c.aim_anchor:
+		return c.aim_anchor.point            # la cabeza mira hacia donde apuntas la siguiente web
 	var next := c.anchor_finder.best_for(float(-c.hand) if c.state == TraversalController.State.SWING
 			else float(c.hand), c.global_position, c.velocity, c.travel_dir)
 	return next.point if next else ahead
