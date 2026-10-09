@@ -613,9 +613,6 @@ func _log_anim(delta: float) -> void:
 	for k: String in body._j:
 		nodes[k] = (body._j[k] as Node3D).quaternion
 	nodes["ROOT"] = Quaternion(player.get_node("VisualRoot").global_transform.basis.orthonormalized())
-	if OS.has_environment("AP_ANIMLOG_SERIES") and _t > 1.5 and _t < 2.3:
-		print("[series] t=%.3f kn_r=%.1f hip_r=%.1f ank_r=%.1f" % [_t, rad_to_deg((nodes["kn_r"] as Quaternion).get_angle()),
-				rad_to_deg((nodes["hip_r"] as Quaternion).get_angle()), rad_to_deg((nodes["ank_r"] as Quaternion).get_angle())])
 	for k: String in nodes:
 		var q: Quaternion = nodes[k]
 		if _alog_prev.has(k):
